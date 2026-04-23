@@ -1,0 +1,93 @@
+// ============================================================
+// Design tokens — change anything here, everywhere follows.
+// ============================================================
+
+// -- Colors --------------------------------------------------
+$color-bg:             #0b0d10;
+$color-surface:        #14171c;
+$color-surface-2:      #1c2027;
+$color-surface-3:      #262b34;
+$color-border:         #262b34;
+$color-border-strong:  #3a4150;
+
+$color-text:           #f1f5f9;
+$color-text-muted:     #94a3b8;
+$color-text-dim:       #64748b;
+
+$color-accent:         #38bdf8;
+$color-accent-hover:   #0ea5e9;
+$color-accent-soft:    #7dd3fc;
+$color-accent-contrast:#ffffff;
+
+$color-danger:         #ef4444;
+$color-danger-bg:      #450a0a;
+$color-danger-border:  #7f1d1d;
+$color-danger-hover:   #7f1d1d;
+
+$color-warn-bg:        rgba(180, 83, 9, 0.85);
+$color-warn-border:    #d97706;
+$color-warn-text:      #fde68a;
+
+$color-success-bg:     rgba(6, 78, 59, 0.85);
+$color-success-border: #10b981;
+$color-success-text:   #d1fae5;
+
+$color-info-bg:        $color-surface-2;
+$color-info-border:    $color-border-strong;
+
+$color-error-bg:       rgba(127, 29, 29, 0.85);
+$color-error-border:   #dc2626;
+$color-error-text:     #fee2e2;
+
+// -- Spacing (use these, don't hardcode px) -----------------
+$space-xxs:  2px;
+$space-xs:   4px;
+$space-sm:   8px;
+$space-md:   12px;
+$space-lg:   16px;
+$space-xl:   24px;
+$space-xxl:  32px;
+
+// -- Radius --------------------------------------------------
+$radius-sm:  4px;
+$radius-md:  6px;
+$radius-lg:  8px;
+$radius-xl:  12px;
+
+// -- Layout dimensions --------------------------------------
+$sidebar-width:    288px;
+$header-height:    48px;
+$node-min-width:   220px;
+$modal-width-sm:   560px;
+$modal-width-md:   720px;
+
+// -- Typography ---------------------------------------------
+$font-size-xxs: 10px;
+$font-size-xs:  11px;
+$font-size-sm:  12px;
+$font-size-md:  14px;
+$font-size-lg:  16px;
+
+$font-weight-regular: 400;
+$font-weight-medium:  500;
+$font-weight-semibold:600;
+$font-weight-bold:    700;
+
+$font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+$font-family-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
+
+// -- Transitions --------------------------------------------
+$transition-fast:    120ms ease;
+$transition-default: 180ms ease;
+$transition-slow:    280ms ease;
+
+// -- Z-index stack -----------------------------------------
+$z-canvas:  1;
+$z-sticky:  10;
+$z-modal:   50;
+$z-toast:   60;
+
+// -- Shadows ------------------------------------------------
+$shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+$shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+$shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);

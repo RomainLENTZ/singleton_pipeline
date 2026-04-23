@@ -1,0 +1,14 @@
+node_modules/
+.singleton/
+examples/
+pipelines/
+.claude/
+.vscode/
+.idea/
+dist/
+build/
+.DS_Store
+*.log
+*.md
+!README.md
+!README.*

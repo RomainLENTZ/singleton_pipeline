@@ -1,0 +1,66 @@
+@use 'variables' as *;
+@use 'mixins' as *;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: $font-family-sans;
+  font-size: $font-size-md;
+  background-color: $color-bg;
+  color: $color-text;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: $color-accent; }
+
+code, pre {
+  font-family: $font-family-mono;
+}
+
+// -- Vue Flow theme overrides ------------------------------
+.vue-flow__node-agent {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.vue-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: $color-accent;
+  border: 2px solid $color-bg;
+}
+
+.vue-flow__edge-path {
+  stroke: $color-accent;
+  stroke-width: 2;
+}
+
+.vue-flow__background {
+  background-color: $color-bg;
+}
+
+.vue-flow__controls {
+  button {
+    background: $color-surface-2;
+    border-color: $color-border-strong;
+    color: $color-text;
+    &:hover { background: $color-surface-3; }
+    svg { fill: $color-text; }
+  }
+}
+
+.vue-flow__minimap {
+  background: $color-surface !important;
+}

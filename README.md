@@ -34,16 +34,16 @@ npm install
 
 ## Quickstart
 
-Scan the example agents:
+Scan agents in a project:
 
 ```bash
-node packages/cli/src/index.js scan ./examples
+node packages/cli/src/index.js scan /path/to/your/project
 ```
 
 Start the API server for a project root:
 
 ```bash
-node packages/cli/src/index.js serve --root ./examples
+node packages/cli/src/index.js serve --root /path/to/your/project
 ```
 
 In another terminal, start the web builder:
@@ -64,19 +64,19 @@ http://localhost:5173
 Run a saved pipeline:
 
 ```bash
-node packages/cli/src/index.js run --pipeline .singleton/pipelines/my-pipeline.json
+node packages/cli/src/index.js run --pipeline /path/to/your/project/.singleton/pipelines/my-pipeline.json
 ```
 
 Run without calling Claude:
 
 ```bash
-node packages/cli/src/index.js run --pipeline .singleton/pipelines/my-pipeline.json --dry-run
+node packages/cli/src/index.js run --pipeline /path/to/your/project/.singleton/pipelines/my-pipeline.json --dry-run
 ```
 
 Show prompts and outputs during execution:
 
 ```bash
-node packages/cli/src/index.js run --pipeline .singleton/pipelines/my-pipeline.json --verbose
+node packages/cli/src/index.js run --pipeline /path/to/your/project/.singleton/pipelines/my-pipeline.json --verbose
 ```
 
 Start the interactive shell:
@@ -172,7 +172,7 @@ Pipeline step inputs and outputs support a few special references.
 
 ```json
 {
-  "spec": "$FILE:examples/inputs/spec.md"
+  "spec": "$FILE:docs/spec.md"
 }
 ```
 
@@ -197,10 +197,10 @@ Pipeline step inputs and outputs support a few special references.
 ```json
 {
   "agent": "code-review",
-  "agent_file": "examples/agents/code-review.md",
+  "agent_file": ".claude/agents/code-review.md",
   "inputs": {
     "source_code": "$PIPE:code-generator.source_code",
-    "guidelines": "$FILE:examples/inputs/guidelines.md"
+    "guidelines": "$FILE:docs/guidelines.md"
   },
   "outputs": {
     "review_report": "$FILE:.singleton/output/review_report.md"
@@ -233,28 +233,25 @@ Généré
 packages/cli      CLI, REPL, scanner, parser, executor
 packages/server   Express API used by the web builder
 packages/web      Vue 3 + Vue Flow pipeline builder
-examples/agents   Example Markdown agents
-examples/inputs   Example specs and guidelines
-pipelines          Local sample pipelines
 ```
 
 ## Useful Commands
 
 ```bash
 # Scan agents in a project
-node packages/cli/src/index.js scan ./examples
+node packages/cli/src/index.js scan /path/to/your/project
 
 # Start API server
-node packages/cli/src/index.js serve --root ./examples
+node packages/cli/src/index.js serve --root /path/to/your/project
 
 # Start web UI in dev mode
 cd packages/web && npm run dev
 
 # Run a pipeline
-node packages/cli/src/index.js run --pipeline pipelines/vue-page-build.json
+node packages/cli/src/index.js run --pipeline /path/to/your/project/.singleton/pipelines/my-pipeline.json
 
 # Dry-run a pipeline
-node packages/cli/src/index.js run --pipeline pipelines/vue-page-build.json --dry-run
+node packages/cli/src/index.js run --pipeline /path/to/your/project/.singleton/pipelines/my-pipeline.json --dry-run
 
 # Build the web UI
 cd packages/web && npm run build
