@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { createShell, C } from '../shell.js';
 import { scanAgents } from '../scanner.js';
 import { runPipeline } from '../executor.js';
@@ -19,6 +20,7 @@ const HELP = [
   `  {${C.blue}-fg}/new{/}                      créer un nouvel agent`,
   `  {${C.blue}-fg}/edit [id]{/}                éditer un agent existant`,
   `  {${C.blue}-fg}/serve{/}                    démarrer le serveur web`,
+  `  {${C.blue}-fg}/commit-last{/}              commit les livrables du dernier run`,
   `  {${C.pink}-fg}/ls{/}                       lister les pipelines`,
   `  {${C.pink}-fg}/help{/}                     cette aide`,
   `  {${C.pink}-fg}/quit{/}                     quitter  {${C.dimV}-fg}(ou Ctrl+C){/}`,
@@ -31,6 +33,7 @@ const COMMANDS = [
   { label: '/new', value: '/new ', description: 'créer un nouvel agent' },
   { label: '/edit', value: '/edit ', description: 'éditer un agent' },
   { label: '/serve', value: '/serve ', description: 'démarrer le serveur web' },
+  { label: '/commit-last', value: '/commit-last', description: 'commit le dernier run' },
   { label: '/ls', value: '/ls', description: 'lister les pipelines' },
   { label: '/help', value: '/help', description: 'afficher l’aide' },
   { label: '/quit', value: '/quit', description: 'quitter' },
@@ -64,6 +67,31 @@ async function resolvePipelinePath(name, root) {
     try { await fs.access(c); return c; } catch { /* skip */ }
   }
   return null;
+}
+
+function runCommand(cmd, args, { cwd }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d.toString()));
+    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || stdout.trim() || `${cmd} exited ${code}`));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function loadLastRunManifest(root) {
+  const latestDir = path.join(root, '.singleton', 'runs', 'latest');
+  const manifestPath = path.join(latestDir, 'run-manifest.json');
+  const raw = await fs.readFile(manifestPath, 'utf8');
+  return JSON.parse(raw);
 }
 
 function splitInput(buffer) {
@@ -170,117 +198,61 @@ function plainBrightLine(text) {
   return text.split('').map((ch) => (ch === ' ' ? ch : `{#FFFFFF-fg}${ch}{/}`)).join('');
 }
 
-const FACE_RAW = [
-  '    ************    ',
-  '  *****      *****  ',
-  ' ****          **** ',
-  '***              ***',
-  '***      **      ***',
-  '**      ****      **',
-  '***      **      ***',
-  '***              ***',
-  ' ****          **** ',
-  '  *****      *****  ',
-  '    ************    ',
-];
-
 const SINGLETON_RAW = [
   '▄█████ ▄▄ ▄▄  ▄▄  ▄▄▄▄ ▄▄    ▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄  ▄▄ ',
   '▀▀▀▄▄▄ ██ ███▄██ ██ ▄▄ ██     ▄▄██   ██  ██▀██ ███▄██ ',
   '█████▀ ██ ██ ▀██ ▀███▀ ██▄▄▄ ▄▄▄██   ██  ▀███▀ ██ ▀██ ',
 ];
 
-const ART_WIDTH = Math.max(
-  ...FACE_RAW.map((l) => l.length),
-  ...SINGLETON_RAW.map((l) => l.length),
-);
+const ART_WIDTH = Math.max(...SINGLETON_RAW.map((l) => l.length));
 
 async function showWelcome(root, shell) {
   const now     = new Date();
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const w       = (shell.screen.width ?? 100) - 6;
 
   const [pipelines, agentCount] = await Promise.all([
     listPipelines(root),
     countAgents(root),
   ]);
 
-  // Gap between face and SINGLETON
-  const GAP        = 2;
-  const allLines   = [...FACE_RAW, ...Array(GAP).fill(''), ...SINGLETON_RAW];
-  const N          = allLines.length;                   // 15 + 2 + 3 = 20
-  const rightArea  = Math.max(20, w - ART_WIDTH - 4);
-
-  // Right column: welcome + date + info block, all left-aligned within the block
-  const infoLines = [
+  const CONTENT_PAD_LEFT = 2;
+  const CONTENT_PAD_TOP  = 1;
+  const contentHeight = Math.max(12, (shell.screen.height ?? 24) - 4);
+  const headerLines = [
     '',
-    '◉ Welcome back',
-    '',
+    ' '.repeat(tw('Welcome back')),
     `${dateStr}  ${timeStr}`,
     '',
     `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`,
     `${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
     '',
-    `Claude Code`,
+    `Currently running on: {${C.peach}-fg}Claude Code{/}`,
     `{${C.dimV}-fg}type /cli to set your preference{/}`,
     '',
   ];
-
-  // Horizontal: center the block (longest visible line) in the right area
-  const maxInfoWidth = Math.max(...infoLines.map(l => tw(l)));
-  const blockHPad   = Math.max(0, Math.floor((rightArea - maxInfoWidth) / 2));
-
-  // Vertical: center the block in N lines
-  const rightStart  = Math.max(0, Math.floor((N - infoLines.length) / 2));
-
-  const CONTENT_PAD_LEFT = 2;
-  const CONTENT_PAD_TOP  = 1;
-  const rightCol = CONTENT_PAD_LEFT + ART_WIDTH + 4 + blockHPad;
+  const TAGLINE  = 'one to rule them all';
+  const bottomBlockHeight = 2 + SINGLETON_RAW.length;
+  const spacerLines = Math.max(0, contentHeight - headerLines.length - bottomBlockHeight);
 
   // Track shimmer positions
-  let welcomeRow = -1;
-  let taglineRow = -1;
+  const welcomeRow = CONTENT_PAD_TOP + 2;
+  const taglineRow = CONTENT_PAD_TOP + headerLines.length + spacerLines;
 
-  shell.log('');
+  for (const line of headerLines) {
+    shell.log(line);
+  }
+  for (let i = 0; i < spacerLines; i += 1) {
+    shell.log('');
+  }
 
-  allLines.forEach((line, i) => {
-    const isFace = i < FACE_RAW.length;
-    const isGap  = i >= FACE_RAW.length && i < FACE_RAW.length + GAP;
-
-    const colored = (isFace || isGap)
-      ? (isFace ? plainBrightLine(line) : '')
-      : plainBrightLine(line);
-
-    const padRight = ' '.repeat(Math.max(0, ART_WIDTH - line.length) + 4 + blockHPad);
-
-    const rIdx = i - rightStart;
-    if (rIdx >= 0 && rIdx < infoLines.length) {
-      const rLine = infoLines[rIdx];
-      const absRow = CONTENT_PAD_TOP + 1 + i;
-
-      if (rLine.includes('Welcome back')) {
-        welcomeRow = absRow;
-        shell.log(colored + padRight + ' '.repeat(tw('Welcome back')));
-      } else if (rLine.includes('Claude Code')) {
-        shell.log(colored + padRight + `Currently running on: {${C.peach}-fg}Claude Code{/}`);
-      } else if (rLine) {
-        shell.log(colored + padRight + rLine);
-      } else {
-        shell.log(colored);
-      }
-    } else {
-      shell.log(colored);
-    }
-  });
-
-  // "one to rule them all" shimmer below art
-  const TAGLINE  = 'one to rule them all';
-  taglineRow     = CONTENT_PAD_TOP + 1 + N;
-  shell.log('');
   shell.log(' '.repeat(TAGLINE.length));
+  shell.log('');
+  for (const line of SINGLETON_RAW) {
+    shell.log(plainBrightLine(line));
+  }
 
-  const stopWelcome = welcomeRow >= 0 ? shell.createShimmer('Welcome back', welcomeRow, rightCol) : () => {};
+  const stopWelcome = shell.createShimmer('Welcome back', welcomeRow, CONTENT_PAD_LEFT);
   const stopTagline = shell.createShimmer(TAGLINE, taglineRow, CONTENT_PAD_LEFT);
 
   return () => { stopWelcome(); stopTagline(); };
@@ -325,6 +297,7 @@ export async function replCommand(opts) {
         case '/new':   await cmdNew(root, shell); break;
         case '/edit':  await cmdEdit(args[0], root, shell); break;
         case '/serve': await cmdServe(root, shell); break;
+        case '/commit-last': await cmdCommitLast(root, shell); break;
         case '/help':  shell.log(HELP); break;
         case '/quit':
         case '/exit':
@@ -418,4 +391,41 @@ async function cmdServe(root, shell) {
   shell.log('{#676498-fg}Démarrage du serveur… (Ctrl+C pour arrêter){/}');
   shell.enableInput();
   await startServer({ port: 4317, root });
+}
+
+async function cmdCommitLast(root, shell) {
+  let manifest;
+  try {
+    manifest = await loadLastRunManifest(root);
+  } catch {
+    shell.log(`{${C.peach}-fg}!{/} Aucun dernier run exploitable trouvé dans .singleton/runs/latest.`);
+    return;
+  }
+
+  const files = Array.isArray(manifest.deliverables) ? manifest.deliverables : [];
+  if (files.length === 0) {
+    shell.log(`{${C.peach}-fg}!{/} Le dernier run n'a produit aucun livrable à committer.`);
+    return;
+  }
+
+  try {
+    await runCommand('git', ['rev-parse', '--show-toplevel'], { cwd: root });
+  } catch {
+    shell.log(`{${C.salmon}-fg}✕{/} Ce projet n'est pas dans un dépôt Git.`);
+    return;
+  }
+
+  shell.log(`{bold}Commit last{/}  {${C.dimV}-fg}${manifest.pipeline || 'unknown pipeline'}{/}`);
+  shell.log('');
+  for (const file of files) shell.log(`  {${C.dimV}-fg}·{/} ${file.path}`);
+  shell.log('');
+
+  const defaultMessage = `Update files from ${manifest.pipeline || 'last pipeline'}`;
+  const message = (await shell.prompt(`Commit message (default: ${defaultMessage})`)).trim() || defaultMessage;
+
+  const relFiles = files.map((file) => file.path);
+  await runCommand('git', ['add', '--', ...relFiles], { cwd: root });
+  await runCommand('git', ['commit', '-m', message], { cwd: root });
+
+  shell.log(`{${C.mint}-fg}✓{/} Commit créé : {${C.dimV}-fg}${message}{/}`);
 }

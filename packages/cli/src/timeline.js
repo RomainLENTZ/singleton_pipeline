@@ -55,7 +55,7 @@ export function createTimeline(stepNames, widgets = null) {
     if (status === 'done')    return `{${C.mint}-fg}●{/}`;
     if (status === 'running') return `{#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}`;
     if (status === 'error')   return `{${C.salmon}-fg}●{/}`;
-    return `{${C.line}-fg}○{/}`;
+    return `{${C.ghost}-fg}○{/}`;
   }
 
   function shimmerName(text, frame = 0) {
@@ -66,34 +66,24 @@ export function createTimeline(stepNames, widgets = null) {
       if (dist === 0) color = '#FFFFFF';
       else if (dist === 1) color = '#EDD9FF';
       else if (dist === 2) color = '#D4B0FE';
-      return ch === ' ' ? ch : `{${color}-fg}${ch}{/}`;
+      return ch === ' ' ? ch : `{${color}-fg}{bold}${ch}{/}`;
     }).join('');
   }
 
-  function stepLine(i, frame = 0) {
-    const s = statuses[i];
-    const nameColor = s === 'running' ? C.violet : s === 'done' ? C.dimV : C.line;
-    const name = `{${nameColor}-fg}${stepNames[i]}{/}`;
-    const info = meta[i] ? `  {${C.line}-fg}${meta[i]}{/}` : '';
-    return `${dot(s, frame)}  ${name}${info}`;
-  }
-
   function compactDots(frame = 0) {
-    return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${C.line}-fg}─{/}  `);
+    return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${C.ghost}-fg}─{/}  `);
   }
 
   function renderTimeline(frame = 0) {
+    const currentMeta = runningIdx >= 0 && meta[runningIdx]
+      ? `  {${C.ghost}-fg}${meta[runningIdx]}{/}`
+      : '';
     const runningLabel = runningIdx >= 0
-      ? `{bold}Running{/}  {#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}  {${C.line}-fg}step ${runningIdx + 1}/${N}{/}`
+      ? `{bold}Running{/}  {#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}  ${shimmerName(stepNames[runningIdx], frame)}  {${C.ghost}-fg}step ${runningIdx + 1}/${N}{/}${currentMeta}`
       : `{bold}Running:{/} {${C.dimV}-fg}idle{/}`;
-    const currentNode = runningIdx >= 0
-      ? shimmerName(stepNames[runningIdx], frame)
-      : `{${C.dimV}-fg}—{/}`;
     const statusLines = [
       '',
       runningLabel,
-      '',
-      currentNode,
       '',
       compactDots(frame)
     ];

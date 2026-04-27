@@ -15,6 +15,14 @@ export const C = {
 
 export function createShell() {
   const screen = blessed.screen({ smartCSR: true, title: 'Singleton' });
+  const inputHints = [
+    '/help to start',
+    '/scan to scan agents',
+    '/new to create an agent',
+    '/run to execute a pipeline',
+    '/edit to update an agent',
+    '/commit-last to commit the last run',
+  ];
 
   // ── Normal mode ────────────────────────────────────────────────
   const content = blessed.log({
@@ -32,7 +40,7 @@ export function createShell() {
   // ── Pipeline mode (single column) ──────────────────────────────
   const pipelineLog = blessed.log({
     top: 0, left: 0,
-    width: '100%', height: '100%-12',
+    width: '100%', height: '100%-10',
     tags: true,
     hidden: true,
     scrollable: true,
@@ -46,13 +54,13 @@ export function createShell() {
 
   const pipelineSep = blessed.line({
     orientation: 'horizontal',
-    bottom: 10, left: 0, width: '100%',
+    bottom: 8, left: 0, width: '100%',
     style: { fg: C.line }
   });
 
   const pipelineStatus = blessed.box({
     bottom: 4, left: 0,
-    width: '100%', height: 6,
+    width: '100%', height: 4,
     tags: true,
     hidden: true,
     padding: { left: 2, right: 2 }
@@ -86,10 +94,17 @@ export function createShell() {
     style: { fg: C.line }
   });
 
-  const footerBox = blessed.box({
+  const footerLeftBox = blessed.box({
     bottom: 0, left: 0,
-    width: '100%', height: 1,
-    padding: { left: 2, right: 2 },
+    width: '70%', height: 1,
+    padding: { left: 2 },
+    tags: true
+  });
+
+  const footerRightBox = blessed.box({
+    bottom: 0, right: 2,
+    width: '30%', height: 1,
+    align: 'right',
     tags: true
   });
 
@@ -101,7 +116,8 @@ export function createShell() {
   screen.append(sep1);
   screen.append(promptBox);
   screen.append(sep2);
-  screen.append(footerBox);
+  screen.append(footerLeftBox);
+  screen.append(footerRightBox);
 
   pipelineSep.hide();
   pipelineStatus.hide();
@@ -119,7 +135,7 @@ export function createShell() {
   let history = [];
   let historyIndex = -1;
   let draftBuffer = '';
-
+  let hintIndex = 0;
   function stripTags(s) {
     return String(s || '').replace(/\{[^}]+\}/g, '');
   }
@@ -194,31 +210,37 @@ export function createShell() {
         `{${C.pink}-fg}?{/}  {${C.dimV}-fg}${promptMode.message}{/}  {${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`
       );
     } else {
-      const hint = buffer ? '' : (
-        history.length === 0
-          ? `{#797C81-fg}/help to start{/}`
-          : `{#797C81-fg}/scan to scan agents  /new to create an agent  /run to execute a pipeline  /edit to update an agent{/}`
-      );
-      promptBox.setContent(`{${C.dimV}-fg}›{/}  ${buffer || hint}{${C.violet}-fg}▌{/}`);
+      if (buffer) {
+        promptBox.setContent(`{${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`);
+      } else {
+        const hint = history.length === 0 ? inputHints[0] : inputHints[hintIndex];
+        promptBox.setContent(`{${C.dimV}-fg}›{/}  {${C.violet}-fg}▌{/}{#797C81-fg}${hint}{/}`);
+      }
     }
     screen.render();
   }
 
   function setFooter(left = '', right = '') {
-    const width = Math.max(20, (screen.width ?? 100) - 4);
-    const leftText = `{${C.dimV}-fg}${left}{/}`;
-    const rightText = `{${C.dimV}-fg}${right}{/}`;
-    const visibleLeft = stripTags(leftText);
-    const visibleRight = stripTags(rightText);
-    const spaces = Math.max(1, width - visibleLeft.length - visibleRight.length);
-    footerBox.setContent(`${leftText}${' '.repeat(spaces)}${rightText}`);
+    footerLeftBox.setContent(`{${C.dimV}-fg}${String(left)}{/}`);
+    footerRightBox.setContent(`{${C.dimV}-fg}${String(right)}{/}`);
     screen.render();
   }
+
+  screen.on('resize', () => {
+    renderSuggestions();
+    screen.render();
+  });
 
   function resetHistoryNav() {
     historyIndex = -1;
     draftBuffer = '';
   }
+
+  const hintTicker = setInterval(() => {
+    if (promptMode || pipelineMode || buffer || history.length === 0) return;
+    hintIndex = (hintIndex + 1) % inputHints.length;
+    updatePrompt();
+  }, 3000);
 
   screen.on('keypress', async (ch, key) => {
     if (key.full === 'C-c') {
@@ -471,6 +493,9 @@ export function createShell() {
     },
 
     screen,
-    destroy() { screen.destroy(); }
+    destroy() {
+      clearInterval(hintTicker);
+      screen.destroy();
+    }
   };
 }

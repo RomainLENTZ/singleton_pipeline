@@ -302,6 +302,81 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   return lines;
 }
 
+const SNAPSHOT_SKIP_DIRS = new Set(['.git', '.singleton', 'node_modules', 'dist', 'build', '.next', '.cache', 'coverage']);
+
+async function snapshotProjectFiles(root, rel = '', out = new Map()) {
+  const abs = path.join(root, rel);
+  const entries = await fs.readdir(abs, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (SNAPSHOT_SKIP_DIRS.has(entry.name)) continue;
+      await snapshotProjectFiles(root, path.join(rel, entry.name), out);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const entryRel = path.join(rel, entry.name);
+    const entryAbs = path.join(root, entryRel);
+    const stat = await fs.stat(entryAbs);
+    out.set(entryRel, `${stat.size}:${Math.floor(stat.mtimeMs)}`);
+  }
+  return out;
+}
+
+function detectSnapshotChanges(before, after, root) {
+  const changed = [];
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  for (const relPath of paths) {
+    const beforeSig = before.get(relPath);
+    const afterSig = after.get(relPath);
+    if (beforeSig === afterSig) continue;
+    changed.push({
+      relPath,
+      absPath: path.join(root, relPath),
+      kind: 'deliverable',
+    });
+  }
+  return changed;
+}
+
+async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [] }) {
+  if (!runDir) return;
+
+  const uniqueWrites = [];
+  const seen = new Set();
+  for (const entry of [...fileWrites, ...detectedDeliverables]) {
+    if (seen.has(entry.absPath)) continue;
+    seen.add(entry.absPath);
+    uniqueWrites.push(entry);
+  }
+
+  const deliverables = uniqueWrites.filter((entry) => entry.kind === 'deliverable');
+  const intermediates = uniqueWrites.filter((entry) => entry.kind === 'intermediate');
+
+  const manifest = {
+    runId,
+    pipeline: pipeline.name,
+    projectRoot: cwd,
+    createdAt: new Date().toISOString(),
+    deliverables: deliverables.map((entry) => ({
+      path: entry.relPath,
+      absPath: entry.absPath,
+    })),
+    intermediates: intermediates.map((entry) => ({
+      path: entry.relPath,
+      absPath: entry.absPath,
+    })),
+    stats: stats.map((s) => ({
+      agent: s.agent,
+      status: s.status,
+      seconds: s.seconds,
+      turns: s.turns,
+      cost: s.cost,
+    })),
+  };
+
+  await fs.writeFile(path.join(runDir, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
+}
+
 export async function runPipeline(filePath, opts = {}) {
   const abs = path.resolve(filePath);
   const pipeline = await loadPipeline(abs);
@@ -310,6 +385,7 @@ export async function runPipeline(filePath, opts = {}) {
   const dryRun  = !!opts.dryRun;
   const verbose = !!opts.verbose;
   const shell   = opts.shell || null;
+  const beforeSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
 
   // Versioned workspace for this run — intermediate artifacts land here.
   const now = new Date();
@@ -457,14 +533,22 @@ export async function runPipeline(filePath, opts = {}) {
           const absOut = path.join(absBase, entry.path);
           await fs.mkdir(path.dirname(absOut), { recursive: true });
           await fs.writeFile(absOut, entry.content);
-          fileWrites.push(path.relative(cwd, absOut));
+          fileWrites.push({
+            absPath: absOut,
+            relPath: path.relative(cwd, absOut),
+            kind: path.relative(cwd, absOut).startsWith('.singleton' + path.sep) ? 'intermediate' : 'deliverable',
+          });
         }
       } else if (typeof sink === 'string' && sink.startsWith('$FILE:')) {
         const outPath = sink.slice('$FILE:'.length).trim();
         const absOut = path.isAbsolute(outPath) ? outPath : path.join(cwd, outPath);
         await fs.mkdir(path.dirname(absOut), { recursive: true });
         await fs.writeFile(absOut, parsed[name]);
-        fileWrites.push(path.relative(cwd, absOut));
+        fileWrites.push({
+          absPath: absOut,
+          relPath: path.relative(cwd, absOut),
+          kind: path.relative(cwd, absOut).startsWith('.singleton' + path.sep) ? 'intermediate' : 'deliverable',
+        });
       }
     }
 
@@ -484,16 +568,27 @@ export async function runPipeline(filePath, opts = {}) {
   timeline.end();
   if (shell) shell.exitPipelineMode();
 
+  const detectedDeliverables = dryRun ? [] : detectSnapshotChanges(beforeSnapshot, await snapshotProjectFiles(cwd), cwd);
+
   if (runDir) {
+    await writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables });
     const latest = path.join(cwd, '.singleton', 'runs', 'latest');
     try { await fs.unlink(latest); } catch { /* missing is fine */ }
     try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical */ }
+  }
+
+  const combinedWrites = [];
+  const seenWrites = new Set();
+  for (const entry of [...fileWrites, ...detectedDeliverables]) {
+    if (seenWrites.has(entry.absPath)) continue;
+    seenWrites.add(entry.absPath);
+    combinedWrites.push(entry);
   }
 
   const out = shell
     ? (t) => shell.log(t)
     : (t) => console.log(stripBlessedTags(t));
 
-  for (const line of renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd })) out(line);
+  for (const line of renderRunSummary({ stats, fileWrites: combinedWrites.map((f) => f.relPath), dryRun, runDir, cwd })) out(line);
   out(dryRun ? `{${C.mint}-fg}✓ dry-run terminé{/}` : `{${C.mint}-fg}✓ pipeline terminée{/}`);
 }
