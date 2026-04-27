@@ -10,7 +10,7 @@ export const C = {
   salmon:  '#FCA5A5',   // erreur
   dimV:    '#b58eb8',   // violet clair (texte muted)
   line:    '#4A4060',   // séparateurs
-  ghost:   '#3A3050',   // très discret
+  ghost:   '#797C81',   // gris discret lisible sur fond sombre
 };
 
 export function createShell() {
@@ -22,30 +22,40 @@ export function createShell() {
     width: '100%', height: '100%-4',
     scrollable: true, alwaysScroll: true,
     tags: true,
-    padding: { left: 2, top: 1, right: 2 }
+    padding: { left: 2, top: 1, right: 2 },
+    scrollbar: {
+      ch: '│',
+      style: { fg: C.line }
+    }
   });
 
-  // ── Pipeline mode (même hauteur que content) ───────────────────
-  const leftPanel = blessed.box({
+  // ── Pipeline mode (single column) ──────────────────────────────
+  const pipelineLog = blessed.log({
     top: 0, left: 0,
-    width: '35%', height: '100%-4',
+    width: '100%', height: '100%-12',
     tags: true,
-    padding: { left: 2, top: 1 }
+    hidden: true,
+    scrollable: true,
+    alwaysScroll: true,
+    padding: { left: 2, top: 1, right: 2 },
+    scrollbar: {
+      ch: '│',
+      style: { fg: C.line }
+    }
   });
 
-  const pSep = blessed.line({
-    orientation: 'vertical',
-    top: 0, left: '35%',
-    height: '100%-4',
+  const pipelineSep = blessed.line({
+    orientation: 'horizontal',
+    bottom: 10, left: 0, width: '100%',
     style: { fg: C.line }
   });
 
-  const rightPanel = blessed.log({
-    top: 0, left: '35%+2',
-    width: '65%-2', height: '100%-4',
+  const pipelineStatus = blessed.box({
+    bottom: 4, left: 0,
+    width: '100%', height: 6,
     tags: true,
-    scrollable: true, alwaysScroll: true,
-    padding: { left: 2, top: 1 }
+    hidden: true,
+    padding: { left: 2, right: 2 }
   });
 
   // ── Shell bar (toujours visible) ───────────────────────────────
@@ -76,18 +86,25 @@ export function createShell() {
     style: { fg: C.line }
   });
 
+  const footerBox = blessed.box({
+    bottom: 0, left: 0,
+    width: '100%', height: 1,
+    padding: { left: 2, right: 2 },
+    tags: true
+  });
+
   screen.append(content);
-  screen.append(leftPanel);
-  screen.append(pSep);
-  screen.append(rightPanel);
+  screen.append(pipelineLog);
+  screen.append(pipelineSep);
+  screen.append(pipelineStatus);
   screen.append(suggestBox);
   screen.append(sep1);
   screen.append(promptBox);
   screen.append(sep2);
+  screen.append(footerBox);
 
-  leftPanel.hide();
-  pSep.hide();
-  rightPanel.hide();
+  pipelineSep.hide();
+  pipelineStatus.hide();
 
   // ── Input state ─────────────────────────────────────────────────
   let buffer       = '';
@@ -98,6 +115,10 @@ export function createShell() {
   let suggestions  = [];
   let suggestIndex = 0;
   let completeSeq  = 0;
+  let pipelineMode = false;
+  let history = [];
+  let historyIndex = -1;
+  let draftBuffer = '';
 
   function stripTags(s) {
     return String(s || '').replace(/\{[^}]+\}/g, '');
@@ -173,9 +194,30 @@ export function createShell() {
         `{${C.pink}-fg}?{/}  {${C.dimV}-fg}${promptMode.message}{/}  {${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`
       );
     } else {
-      promptBox.setContent(`{${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`);
+      const hint = buffer ? '' : (
+        history.length === 0
+          ? `{#797C81-fg}/help to start{/}`
+          : `{#797C81-fg}/scan to scan agents  /new to create an agent  /run to execute a pipeline  /edit to update an agent{/}`
+      );
+      promptBox.setContent(`{${C.dimV}-fg}›{/}  ${buffer || hint}{${C.violet}-fg}▌{/}`);
     }
     screen.render();
+  }
+
+  function setFooter(left = '', right = '') {
+    const width = Math.max(20, (screen.width ?? 100) - 4);
+    const leftText = `{${C.dimV}-fg}${left}{/}`;
+    const rightText = `{${C.dimV}-fg}${right}{/}`;
+    const visibleLeft = stripTags(leftText);
+    const visibleRight = stripTags(rightText);
+    const spaces = Math.max(1, width - visibleLeft.length - visibleRight.length);
+    footerBox.setContent(`${leftText}${' '.repeat(spaces)}${rightText}`);
+    screen.render();
+  }
+
+  function resetHistoryNav() {
+    historyIndex = -1;
+    draftBuffer = '';
   }
 
   screen.on('keypress', async (ch, key) => {
@@ -183,6 +225,72 @@ export function createShell() {
       log(`{${C.dimV}-fg}À bientôt.{/}`);
       screen.render();
       setTimeout(() => { screen.destroy(); process.exit(0); }, 200);
+    }
+
+    if (pipelineMode && !promptMode) {
+      if (key.name === 'up') {
+        pipelineLog.scroll(-1);
+        screen.render();
+        return;
+      }
+      if (key.name === 'down') {
+        pipelineLog.scroll(1);
+        screen.render();
+        return;
+      }
+      if (key.name === 'pageup') {
+        pipelineLog.scroll(-(pipelineLog.height - 2));
+        screen.render();
+        return;
+      }
+      if (key.name === 'pagedown') {
+        pipelineLog.scroll(pipelineLog.height - 2);
+        screen.render();
+        return;
+      }
+      if (key.name === 'home') {
+        pipelineLog.setScroll(0);
+        screen.render();
+        return;
+      }
+      if (key.name === 'end') {
+        pipelineLog.setScrollPerc(100);
+        screen.render();
+        return;
+      }
+    }
+
+    if (!pipelineMode && !promptMode && !suggestions.length) {
+      if (buffer === '' && key.name === 'up') {
+        content.scroll(-1);
+        screen.render();
+        return;
+      }
+      if (buffer === '' && key.name === 'down') {
+        content.scroll(1);
+        screen.render();
+        return;
+      }
+      if (key.name === 'pageup') {
+        content.scroll(-(content.height - 2));
+        screen.render();
+        return;
+      }
+      if (key.name === 'pagedown') {
+        content.scroll(content.height - 2);
+        screen.render();
+        return;
+      }
+      if (key.name === 'home') {
+        content.setScroll(0);
+        screen.render();
+        return;
+      }
+      if (key.name === 'end') {
+        content.setScrollPerc(100);
+        screen.render();
+        return;
+      }
     }
 
     if (!inputEnabled && !promptMode) return;
@@ -217,6 +325,32 @@ export function createShell() {
       return;
     }
 
+    if (!promptMode && !suggestions.length && (key.full === 'C-p' || key.full === 'C-n')) {
+      if (history.length === 0) return;
+
+      if (key.full === 'C-p') {
+        if (historyIndex === -1) {
+          draftBuffer = buffer;
+          historyIndex = history.length - 1;
+        } else if (historyIndex > 0) {
+          historyIndex -= 1;
+        }
+        buffer = history[historyIndex] || '';
+      } else {
+        if (historyIndex === -1) return;
+        if (historyIndex < history.length - 1) {
+          historyIndex += 1;
+          buffer = history[historyIndex] || '';
+        } else {
+          historyIndex = -1;
+          buffer = draftBuffer;
+        }
+      }
+
+      updatePrompt();
+      return;
+    }
+
     if (key.name === 'enter' || key.name === 'return') {
       const value = buffer.trim();
       buffer = '';
@@ -229,15 +363,24 @@ export function createShell() {
         resolve(value);
       } else {
         updatePrompt();
-        if (value && onSubmit) onSubmit(value);
+        if (value) {
+          if (history[history.length - 1] !== value) history.push(value);
+          if (history.length > 200) history = history.slice(-200);
+          resetHistoryNav();
+          if (onSubmit) onSubmit(value);
+        } else {
+          resetHistoryNav();
+        }
       }
     } else if (key.name === 'backspace') {
       buffer = buffer.slice(0, -1);
       hideSuggestions();
+      resetHistoryNav();
       updatePrompt();
     } else if (ch && !key.ctrl && !key.meta) {
       buffer += ch;
       hideSuggestions();
+      resetHistoryNav();
       updatePrompt();
     }
   });
@@ -253,6 +396,7 @@ export function createShell() {
     log,
     logMuted(text)  { log(`{${C.dimV}-fg}${text}{/}`); },
     logAccent(text) { log(`{${C.violet}-fg}${text}{/}`); },
+    setFooter,
 
     clear() { content.setContent(''); screen.render(); },
     onCommand(fn)  { onSubmit = fn; },
@@ -289,31 +433,40 @@ export function createShell() {
       const iv = setInterval(render, 80);
       return () => { clearInterval(iv); screen.remove(box); screen.render(); };
     },
-    disableInput() { inputEnabled = false; hideSuggestions(); screen.render(); },
-    enableInput()  { inputEnabled = true; buffer = ''; hideSuggestions(); updatePrompt(); },
+    disableInput() { inputEnabled = false; hideSuggestions(); resetHistoryNav(); screen.render(); },
+    enableInput()  { inputEnabled = true; buffer = ''; hideSuggestions(); resetHistoryNav(); updatePrompt(); },
 
     prompt(message) {
       return new Promise((resolve) => {
         promptMode = { resolve, message };
         buffer = '';
         hideSuggestions();
+        resetHistoryNav();
         updatePrompt();
       });
     },
 
-    pipelineWidgets: { screen, leftPanel, rightPanel },
+    pipelineWidgets: { screen, logPanel: pipelineLog, statusBox: pipelineStatus },
 
     enterPipelineMode() {
+      pipelineMode = true;
       content.hide();
-      leftPanel.setContent('');
-      rightPanel.setContent('');
-      leftPanel.show(); pSep.show(); rightPanel.show();
+      pipelineLog.setContent('');
+      pipelineStatus.setContent('');
+      pipelineLog.show();
+      pipelineSep.show();
+      pipelineStatus.show();
+      promptBox.setContent(`{${C.dimV}-fg}scroll: ↑ ↓ pgup pgdn home end{/}`);
       screen.render();
     },
 
     exitPipelineMode() {
-      leftPanel.hide(); pSep.hide(); rightPanel.hide();
+      pipelineMode = false;
+      pipelineLog.hide();
+      pipelineSep.hide();
+      pipelineStatus.hide();
       content.show();
+      updatePrompt();
       screen.render();
     },
 

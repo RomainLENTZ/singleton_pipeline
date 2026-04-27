@@ -166,28 +166,28 @@ function gradientLine(text, totalWidth, colors = SINGLETON_GRAD) {
   }).join('');
 }
 
+function plainBrightLine(text) {
+  return text.split('').map((ch) => (ch === ' ' ? ch : `{#FFFFFF-fg}${ch}{/}`)).join('');
+}
+
 const FACE_RAW = [
-  '    ****                                    ****    ',
-  '  ********                                ********  ',
-  '************                            ************',
-  '****    ****                            ****    ****',
-  '**** ** ****                            **** ** ****',
-  '**** ** ****                            **** ** ****',
-  '****    ****                            ****    ****',
-  '****    ****                            ****    ****',
-  ' *********                                ********* ',
-  '   ******                                  ******   ',
-  '                                                    ',
-  '                  **             **                 ',
-  '                  ****         *****                ',
-  '                  *****************                 ',
-  '                    *************                   ',
-].map((l) => l.replaceAll('*', '█'));
+  '    ************    ',
+  '  *****      *****  ',
+  ' ****          **** ',
+  '***              ***',
+  '***      **      ***',
+  '**      ****      **',
+  '***      **      ***',
+  '***              ***',
+  ' ****          **** ',
+  '  *****      *****  ',
+  '    ************    ',
+];
 
 const SINGLETON_RAW = [
-  '▄█████ ▄▄ ▄▄  ▄▄  ▄▄▄▄ ▄▄   ▄▄▄▄▄▄ ▄▄▄  ▄▄  ▄▄ ',
-  '▀▀▀▄▄▄ ██ ███▄██ ██ ▄▄ ██     ██  ██▀██ ███▄██ ',
-  '█████▀ ██ ██ ▀██ ▀███▀ ██▄▄▄  ██  ▀███▀ ██ ▀██ ',
+  '▄█████ ▄▄ ▄▄  ▄▄  ▄▄▄▄ ▄▄    ▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄  ▄▄ ',
+  '▀▀▀▄▄▄ ██ ███▄██ ██ ▄▄ ██     ▄▄██   ██  ██▀██ ███▄██ ',
+  '█████▀ ██ ██ ▀██ ▀███▀ ██▄▄▄ ▄▄▄██   ██  ▀███▀ ██ ▀██ ',
 ];
 
 const ART_WIDTH = Math.max(
@@ -249,8 +249,8 @@ async function showWelcome(root, shell) {
     const isGap  = i >= FACE_RAW.length && i < FACE_RAW.length + GAP;
 
     const colored = (isFace || isGap)
-      ? (isFace ? `{${i >= 11 ? C.pink : C.violet}-fg}${line}{/}` : '')
-      : gradientLine(line, ART_WIDTH);
+      ? (isFace ? plainBrightLine(line) : '')
+      : plainBrightLine(line);
 
     const padRight = ' '.repeat(Math.max(0, ART_WIDTH - line.length) + 4 + blockHPad);
 
@@ -293,11 +293,23 @@ async function showWelcome(root, shell) {
   shell.log('');
 }
 
+async function refreshFooter(root, shell) {
+  const [pipelines, agentCount] = await Promise.all([
+    listPipelines(root),
+    countAgents(root),
+  ]);
+  shell.setFooter(
+    `${agentCount} agent${agentCount !== 1 ? 's' : ''}  /scan to refresh`,
+    `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`
+  );
+}
+
 export async function replCommand(opts) {
   const root  = path.resolve(opts.root || process.cwd());
   const shell = createShell();
 
   let stopShimmer = await showWelcome(root, shell);
+  await refreshFooter(root, shell);
 
   shell.setCompleter(({ buffer }) => completeRepl(buffer, root));
 
@@ -309,7 +321,7 @@ export async function replCommand(opts) {
       switch (cmd) {
         case '/run':   await cmdRun(args, root, shell); break;
         case '/ls':    await cmdLs(root, shell); break;
-        case '/scan':  await cmdScan(root, shell); break;
+        case '/scan':  await cmdScan(root, shell); await refreshFooter(root, shell); break;
         case '/new':   await cmdNew(root, shell); break;
         case '/edit':  await cmdEdit(args[0], root, shell); break;
         case '/serve': await cmdServe(root, shell); break;
