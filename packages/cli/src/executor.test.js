@@ -100,4 +100,22 @@ describe('runPipeline preflight', () => {
 
     await expect(runPipeline(file, { dryRun: true, quiet: true })).rejects.toThrow(/matched no files/);
   });
+
+  it('rejects unsupported Claude permission_mode values', async () => {
+    const file = await writePipeline(tmpRoot, 'badperm', {
+      name: 'badperm',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          permission_mode: 'ask',
+          inputs: { text: '$FILE:inputs/sample.md' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, { dryRun: true, quiet: true })).rejects.toThrow(/unsupported Claude permission_mode/);
+  });
 });

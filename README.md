@@ -1,4 +1,4 @@
-# Singleton Pipeline Builder
+# Singleton Pipeline Builder (Beta)
 
 Singleton is a local-first multi-agent pipeline runner for codebases. It lets you define agents as Markdown files, connect them visually, execute them with Claude or Codex, inspect runs, and commit generated deliverables safely.
 
@@ -6,6 +6,18 @@ Singleton is local-first:
 - agents live canonically in `.singleton/agents`
 - pipelines live in `.singleton/pipelines`
 - run artifacts live in `.singleton/runs`
+
+## Status
+
+Singleton is currently an early beta.
+
+What that means in practice:
+
+- the core local workflow is working
+- Claude and Codex runners are supported
+- the pipeline format is usable, but may still evolve
+- the CLI and builder UX are improving quickly
+- the project is best suited today for early adopters and local experimentation
 
 ## Features
 
@@ -20,6 +32,14 @@ Singleton is local-first:
 - Keep a versioned run workspace in `.singleton/runs/<run-id>`.
 - Commit the last run deliverables with `/commit-last`.
 - Start the builder API from the REPL with `/serve` and stop it with `/stop`.
+
+## Planned Improvements
+
+- richer validation and more test coverage around multi-provider execution
+- better npm packaging and installation flow
+- more polished builder UX for agents, variables, and provider settings
+- stronger review and run workflows, including safer delivery and commit flows
+- additional provider integrations where the runtime model makes sense
 
 ## Supported Providers
 
@@ -48,6 +68,19 @@ Dry-runs do not call any LLM CLI.
 
 ```bash
 npm install
+```
+
+Run the CLI locally:
+
+```bash
+npm run singleton -- --help
+```
+
+Or link it globally for local development:
+
+```bash
+npm link
+singleton --help
 ```
 
 ## Project Model

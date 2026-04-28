@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "singleton": "./packages/cli/src/index.js"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
+    "singleton": "node packages/cli/src/index.js",
     "scan": "node packages/cli/src/index.js scan",
     "serve": "node packages/cli/src/index.js serve",
     "dev:server": "node packages/server/src/index.js",
