@@ -5,11 +5,11 @@ export const C = {
   violet:  '#C084FC',   // accent principal
   pink:    '#F9A8D4',   // secondaire
   blue:    '#93C5FD',   // tertiaire
-  mint:    '#6EE7B7',   // succès
+  mint:    '#6EE7B7',   // success
   peach:   '#FDBA74',   // warning
   salmon:  '#FCA5A5',   // erreur
   dimV:    '#b58eb8',   // violet clair (texte muted)
-  line:    '#4A4060',   // séparateurs
+  line:    '#4A4060',   // separators
   ghost:   '#797C81',   // gris discret lisible sur fond sombre
 };
 
@@ -267,7 +267,7 @@ export function createShell() {
 
   screen.on('keypress', async (ch, key) => {
     if (key.full === 'C-c') {
-      log(`{${C.dimV}-fg}À bientôt.{/}`);
+      log(`{${C.dimV}-fg}See you soon.{/}`);
       screen.render();
       setTimeout(() => { screen.destroy(); process.exit(0); }, 200);
     }

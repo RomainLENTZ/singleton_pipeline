@@ -109,10 +109,10 @@ async function collectInputValues(pipeline, dryRun, promptFn = null) {
       values[def.id] = def.value;
       if (!promptFn) console.log(style.muted(`  ${label}: ${def.value}`));
     } else if (dryRun) {
-      values[def.id] = def.subtype === 'file' ? '(chemin non renseigné)' : 'réponse arbitraire (dry-run)';
-      if (!promptFn) console.log(style.muted(`  ${label}: (arbitraire)`));
+      values[def.id] = def.subtype === 'file' ? '(file path not provided)' : 'arbitrary response (dry-run)';
+      if (!promptFn) console.log(style.muted(`  ${label}: (arbitrary)`));
     } else {
-      const msg = def.subtype === 'file' ? `${label} (chemin du fichier)` : label;
+      const msg = def.subtype === 'file' ? `${label} (file path)` : label;
       values[def.id] = await askFn(msg, def.value || null);
     }
   }
@@ -123,13 +123,13 @@ function buildUserMessage(resolvedInputs, outputNames, workspaceInfo) {
   const parts = [];
   if (workspaceInfo) {
     parts.push('<workspace>');
-    parts.push(`Racine du projet : ${workspaceInfo.projectRoot}`);
-    parts.push(`Dossier de travail de ce step : ${workspaceInfo.stepDirRel}`);
+    parts.push(`Project root: ${workspaceInfo.projectRoot}`);
+    parts.push(`Working directory for this step: ${workspaceInfo.stepDirRel}`);
     parts.push('');
-    parts.push(`Règles d'écriture de fichiers :`);
-    parts.push(`- Livrables du projet (code source : composants, vues, API, services, tests, styles, etc.) : utilise ton outil Write pour les placer à leur emplacement naturel dans le repo (ex: src/components/molecules/X.vue, server/routes/api.js). Chemins relatifs à la racine du projet.`);
-    parts.push(`- Fichiers intermédiaires (reviews, plans, logs, notes, debug, scratch) : écris-les dans ton dossier de travail ci-dessus.`);
-    parts.push(`- N'écris JAMAIS de code source livrable dans .singleton/ ni dans ton dossier de travail.`);
+    parts.push(`File writing rules:`);
+    parts.push(`- Project deliverables (source code: components, views, API, services, tests, styles, etc.): use your Write tool to place them at their natural location in the repo (example: src/components/molecules/X.vue, server/routes/api.js). Paths are relative to the project root.`);
+    parts.push(`- Intermediate files (reviews, plans, logs, notes, debug, scratch): write them inside the step working directory above.`);
+    parts.push(`- Never write deliverable source code into .singleton/ or into the step working directory.`);
     parts.push('</workspace>');
     parts.push('');
   }
@@ -478,9 +478,9 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
 
   const lines = [
     '',
-    '{bold}Récapitulatif{/}',
+    '{bold}Summary{/}',
     '',
-    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', permission: 'Perm', status: 'Statut', time: 'Temps', turns: 'Tours', cost: 'Coût' }),
+    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', permission: 'Perm', status: 'Status', time: 'Time', turns: 'Turns', cost: 'Cost' }),
     hr,
     ...rows.map(row),
     hr,
@@ -493,10 +493,10 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   }
 
   if (fileWrites.length) {
-    lines.push('', '{bold}Généré{/}');
+    lines.push('', '{bold}Generated{/}');
     for (const f of fileWrites) lines.push(`  {${C.dimV}-fg}·{/} ${f}`);
   } else {
-    lines.push('', `{${C.dimV}-fg}Aucun fichier généré.{/}`);
+    lines.push('', `{${C.dimV}-fg}No files generated.{/}`);
   }
 
   return lines;
@@ -795,7 +795,7 @@ export async function runPipeline(filePath, opts = {}) {
           const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
           let manifest;
           try { manifest = JSON.parse(rawJson); } catch (e) {
-            failStep(timeline, timelineIndex, '$FILES: JSON invalide', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
+            failStep(timeline, timelineIndex, 'invalid $FILES JSON', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
           }
           for (const entry of (Array.isArray(manifest) ? manifest : [])) {
             const absOut = path.resolve(absBase, entry.path);
@@ -866,5 +866,5 @@ export async function runPipeline(filePath, opts = {}) {
     : (t) => console.log(stripBlessedTags(t));
 
   for (const line of renderRunSummary({ stats, fileWrites: combinedWrites.map((f) => f.relPath), dryRun, runDir, cwd })) out(line);
-  out(dryRun ? `{${C.mint}-fg}✓ dry-run terminé{/}` : `{${C.mint}-fg}✓ pipeline terminée{/}`);
+  out(dryRun ? `{${C.mint}-fg}✓ dry-run complete{/}` : `{${C.mint}-fg}✓ pipeline complete{/}`);
 }

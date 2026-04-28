@@ -10,38 +10,38 @@ const PIPELINES_DIRS = ['.singleton/pipelines'];
 
 const HELP = [
   '',
-  `{bold}Commandes{/}`,
+  `{bold}Commands{/}`,
   '',
-  `  {${C.violet}-fg}/run <name>{/}               exécuter une pipeline`,
-  `  {${C.violet}-fg}/run <name> --dry{/}         dry-run (plan sans appel API)`,
-  `  {${C.violet}-fg}/run <name> --verbose{/}     afficher prompts et outputs`,
-  `  {${C.blue}-fg}/scan{/}                     scanner les agents .md`,
-  `  {${C.blue}-fg}/new{/}                      créer un nouvel agent`,
-  `  {${C.blue}-fg}/serve{/}                    démarrer le serveur web`,
-  `  {${C.blue}-fg}/stop{/}                     arrêter le serveur web`,
-  `  {${C.blue}-fg}/commit-last{/}              commit les livrables du dernier run`,
-  `  {${C.pink}-fg}/ls{/}                       lister les pipelines`,
-  `  {${C.pink}-fg}/help{/}                     cette aide`,
-  `  {${C.pink}-fg}/quit{/}                     quitter  {${C.dimV}-fg}(ou Ctrl+C){/}`,
+  `  {${C.violet}-fg}/run <name>{/}               run a pipeline`,
+  `  {${C.violet}-fg}/run <name> --dry{/}         dry-run (plan without API calls)`,
+  `  {${C.violet}-fg}/run <name> --verbose{/}     show prompts and outputs`,
+  `  {${C.blue}-fg}/scan{/}                     scan .md agents`,
+  `  {${C.blue}-fg}/new{/}                      create a new agent`,
+  `  {${C.blue}-fg}/serve{/}                    start the web server`,
+  `  {${C.blue}-fg}/stop{/}                     stop the web server`,
+  `  {${C.blue}-fg}/commit-last{/}              commit deliverables from the last run`,
+  `  {${C.pink}-fg}/ls{/}                       list pipelines`,
+  `  {${C.pink}-fg}/help{/}                     show help`,
+  `  {${C.pink}-fg}/quit{/}                     quit  {${C.dimV}-fg}(or Ctrl+C){/}`,
   '',
 ].join('\n');
 
 const COMMANDS = [
-  { label: '/run', value: '/run ', description: 'exécuter une pipeline' },
-  { label: '/scan', value: '/scan ', description: 'scanner les agents .md' },
-  { label: '/new', value: '/new ', description: 'créer un nouvel agent' },
-  { label: '/serve', value: '/serve ', description: 'démarrer le serveur web' },
-  { label: '/stop', value: '/stop', description: 'arrêter le serveur web' },
-  { label: '/commit-last', value: '/commit-last', description: 'commit le dernier run' },
-  { label: '/ls', value: '/ls', description: 'lister les pipelines' },
-  { label: '/help', value: '/help', description: 'afficher l’aide' },
-  { label: '/quit', value: '/quit', description: 'quitter' },
+  { label: '/run', value: '/run ', description: 'run a pipeline' },
+  { label: '/scan', value: '/scan ', description: 'scan .md agents' },
+  { label: '/new', value: '/new ', description: 'create a new agent' },
+  { label: '/serve', value: '/serve ', description: 'start the web server' },
+  { label: '/stop', value: '/stop', description: 'stop the web server' },
+  { label: '/commit-last', value: '/commit-last', description: 'commit the last run' },
+  { label: '/ls', value: '/ls', description: 'list pipelines' },
+  { label: '/help', value: '/help', description: 'show help' },
+  { label: '/quit', value: '/quit', description: 'quit' },
 ];
 
 const RUN_FLAGS = [
-  { label: '--dry', description: 'plan sans appel API' },
-  { label: '--verbose', description: 'afficher prompts et outputs' },
-  { label: '-v', description: 'alias de --verbose' },
+  { label: '--dry', description: 'plan without API calls' },
+  { label: '--verbose', description: 'show prompts and outputs' },
+  { label: '-v', description: 'alias for --verbose' },
 ];
 
 async function listPipelines(root) {
@@ -155,7 +155,7 @@ async function completeRepl(buffer, root) {
   return [];
 }
 
-// Strip blessed tags to get visible string length
+// Strip blessed tags to get the visible string length.
 function tw(s) { return s.replace(/\{[^}]+\}/g, '').length; }
 
 function layoutRow(left, right, width) {
@@ -223,7 +223,7 @@ async function showWelcome(root, shell) {
   const bottomBlockHeight = 2 + SINGLETON_RAW.length;
   const spacerLines = Math.max(0, contentHeight - headerLines.length - bottomBlockHeight);
 
-  // Track shimmer positions
+  // Track shimmer positions.
   const welcomeRow = CONTENT_PAD_TOP + 2;
   const taglineRow = CONTENT_PAD_TOP + headerLines.length + spacerLines;
 
@@ -301,11 +301,11 @@ export async function replCommand(opts) {
             await closeServer(serveState.server);
             serveState.clear();
           }
-          shell.log('{#676498-fg}À bientôt.{/}');
+          shell.log('{#676498-fg}See you soon.{/}');
           setTimeout(() => { shell.destroy(); process.exit(0); }, 300);
           return;
         default:
-          shell.log(`{${C.peach}-fg}!{/} Commande inconnue : {bold}${cmd}{/}  — tape /help`);
+          shell.log(`{${C.peach}-fg}!{/} Unknown command: {bold}${cmd}{/}  — type /help`);
       }
     } catch (err) {
       shell.log(`{${C.salmon}-fg}✕{/} ${err.message}`);
@@ -322,19 +322,19 @@ async function cmdRun(args, root, shell) {
   if (!name) {
     const pipelines = await listPipelines(root);
     if (pipelines.length === 0) {
-      shell.log(`{${C.peach}-fg}!{/} Aucune pipeline trouvée.`);
+      shell.log(`{${C.peach}-fg}!{/} No pipelines found.`);
       return;
     }
-    shell.log(`{${C.dimV}-fg}  Pipelines : ${pipelines.join(', ')}{/}`);
-    shell.log(`{${C.dimV}-fg}  Usage : /run <name> [--dry]{/}`);
+    shell.log(`{${C.dimV}-fg}  Pipelines: ${pipelines.join(', ')}{/}`);
+    shell.log(`{${C.dimV}-fg}  Usage: /run <name> [--dry]{/}`);
     return;
   }
 
   const filePath = await resolvePipelinePath(name, root);
   if (!filePath) {
-    shell.log(`{${C.salmon}-fg}✕{/} Pipeline "{bold}${name}{/}" introuvable.`);
+    shell.log(`{${C.salmon}-fg}✕{/} Pipeline "{bold}${name}{/}" not found.`);
     const pipelines = await listPipelines(root);
-    if (pipelines.length) shell.log(`{${C.dimV}-fg}  Disponibles : ${pipelines.join(', ')}{/}`);
+    if (pipelines.length) shell.log(`{${C.dimV}-fg}  Available: ${pipelines.join(', ')}{/}`);
     return;
   }
 
@@ -344,7 +344,7 @@ async function cmdRun(args, root, shell) {
 async function cmdLs(root, shell) {
   const pipelines = await listPipelines(root);
   if (pipelines.length === 0) {
-    shell.log('{yellow-fg}!{/} Aucune pipeline trouvée.');
+    shell.log('{yellow-fg}!{/} No pipelines found.');
     return;
   }
   shell.log(`{bold}Pipelines (${pipelines.length}){/}`);
@@ -354,16 +354,16 @@ async function cmdLs(root, shell) {
 }
 
 async function cmdScan(root, shell) {
-  shell.log(`{${C.dimV}-fg}Scan de ${root}…{/}`);
+  shell.log(`{${C.dimV}-fg}Scanning ${root}…{/}`);
   const agents = await scanAgents(root);
   if (agents.length === 0) {
-    shell.log(`{${C.peach}-fg}!{/} Aucun agent trouvé (aucun .md avec ## Config).`);
+    shell.log(`{${C.peach}-fg}!{/} No agents found (no .md files with ## Config).`);
     return;
   }
   shell.log(`{bold}Agents (${agents.length}){/}`);
   shell.log('');
   agents.forEach((a, index) => {
-    shell.log(`  {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(sans description)'}{/}`);
+    shell.log(`  {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(no description)'}{/}`);
     shell.log(`  {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.provider ? `   {${C.peach}-fg}{bold}provider{/}: {${C.dimV}-fg}${a.provider}{/}` : ''}${a.permission_mode ? `   {${C.peach}-fg}{bold}permission{/}: {${C.dimV}-fg}${a.permission_mode}{/}` : ''}`);
     shell.log(`  {${C.mint}-fg}{bold}in{/}: {${C.dimV}-fg}${a.inputs.join(', ') || '—'}{/}   {${C.pink}-fg}{bold}out{/}: {${C.dimV}-fg}${a.outputs.join(', ') || '—'}{/}`);
     if (index < agents.length - 1) shell.log(`  {${C.dimV}-fg}────────────────────────────────────────{/}`);
@@ -393,12 +393,12 @@ function closeServer(server) {
 
 async function cmdServe(root, shell, serveState) {
   if (serveState.server) {
-    shell.log(`{${C.peach}-fg}!{/} Le serveur tourne déjà sur {${C.blue}-fg}${serveState.url}{/}.`);
+    shell.log(`{${C.peach}-fg}!{/} The server is already running on {${C.blue}-fg}${serveState.url}{/}.`);
     return;
   }
   const { startServer } = await import('../../../server/src/index.js');
   const serverUrl = 'http://localhost:4317';
-  shell.log('{#676498-fg}Démarrage du serveur… (/stop pour arrêter){/}');
+  shell.log('{#676498-fg}Starting server… (/stop to stop){/}');
   shell.enableInput();
   const server = await startServer({
     port: 4317,
@@ -429,7 +429,7 @@ async function cmdServe(root, shell, serveState) {
 
 async function cmdStop(shell, serveState) {
   if (!serveState.server) {
-    shell.log(`{${C.peach}-fg}!{/} Aucun serveur en cours d'exécution.`);
+    shell.log(`{${C.peach}-fg}!{/} No running server.`);
     return;
   }
   const url = serveState.url;
@@ -447,20 +447,20 @@ async function cmdCommitLast(root, shell) {
   try {
     manifest = await loadLastRunManifest(root);
   } catch {
-    shell.log(`{${C.peach}-fg}!{/} Aucun dernier run exploitable trouvé dans .singleton/runs/latest.`);
+    shell.log(`{${C.peach}-fg}!{/} No usable latest run found in .singleton/runs/latest.`);
     return;
   }
 
   const files = Array.isArray(manifest.deliverables) ? manifest.deliverables : [];
   if (files.length === 0) {
-    shell.log(`{${C.peach}-fg}!{/} Le dernier run n'a produit aucun livrable à committer.`);
+    shell.log(`{${C.peach}-fg}!{/} The last run produced no deliverables to commit.`);
     return;
   }
 
   try {
     await runCommand('git', ['rev-parse', '--show-toplevel'], { cwd: root });
   } catch {
-    shell.log(`{${C.salmon}-fg}✕{/} Ce projet n'est pas dans un dépôt Git.`);
+    shell.log(`{${C.salmon}-fg}✕{/} This project is not inside a Git repository.`);
     return;
   }
 
@@ -476,5 +476,5 @@ async function cmdCommitLast(root, shell) {
   await runCommand('git', ['add', '--', ...relFiles], { cwd: root });
   await runCommand('git', ['commit', '-m', message], { cwd: root });
 
-  shell.log(`{${C.mint}-fg}✓{/} Commit créé : {${C.dimV}-fg}${message}{/}`);
+  shell.log(`{${C.mint}-fg}✓{/} Commit created: {${C.dimV}-fg}${message}{/}`);
 }

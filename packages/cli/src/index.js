@@ -63,8 +63,8 @@ program
 
 program
   .command('new')
-  .description('Créer un nouvel agent .md en interactif')
-  .option('-r, --root <path>', 'Racine du repo à scanner', process.cwd())
+  .description('Create a new agent .md file interactively')
+  .option('-r, --root <path>', 'Project root to scan', process.cwd())
   .action(async (opts) => {
     await newAgentCommand(opts);
   });
@@ -81,8 +81,8 @@ program
 
 program
   .command('repl', { isDefault: true })
-  .description('Shell interactif Singleton (défaut)')
-  .option('-r, --root <path>', 'Racine du projet', process.cwd())
+  .description('Interactive Singleton shell (default)')
+  .option('-r, --root <path>', 'Project root', process.cwd())
   .action(async (opts) => {
     await replCommand(opts);
   });

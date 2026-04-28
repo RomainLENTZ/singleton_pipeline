@@ -5,7 +5,7 @@ import { style, line } from '../theme.js';
 import { scanAgents } from '../scanner.js';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
-const CHOICE_NONE = { name: '(aucun)', value: '' };
+const CHOICE_NONE = { name: '(none)', value: '' };
 const CLAUDE_MODELS = [
   { name: 'claude-opus-4-7', value: 'claude-opus-4-7' },
   { name: 'claude-sonnet-4-6', value: 'claude-sonnet-4-6' },
@@ -69,8 +69,8 @@ function inputSuggestionsFromContext(context) {
 }
 
 function validateAgentId(existingIds, value) {
-  if (!SLUG_RE.test(value)) return 'slug invalide (a-z, 0-9, tirets)';
-  if (existingIds.has(value)) return `id "${value}" déjà utilisé`;
+  if (!SLUG_RE.test(value)) return 'invalid slug (a-z, 0-9, hyphens)';
+  if (existingIds.has(value)) return `id "${value}" is already used`;
   return true;
 }
 
@@ -142,7 +142,7 @@ async function askShellChoice(shell, message, choices, defaultValue) {
     const byValue = choices.find((choice) => choice.value === raw);
     const selected = byIndex || byValue;
     if (selected) return selected.value;
-    shell.log(`{red-fg}✕{/} Choisis une valeur dans la liste.`);
+    shell.log(`{red-fg}✕{/} Choose a value from the list.`);
   }
 }
 
@@ -164,7 +164,7 @@ async function collectList({ message, existing }) {
 
         if (picked.length > 0) {
           choices.push({
-            name: `← retirer « ${picked[picked.length - 1]} »`,
+            name: `← remove "${picked[picked.length - 1]}"`,
             value: UNDO
           });
         }
@@ -176,10 +176,10 @@ async function collectList({ message, existing }) {
         for (const v of matching) choices.push({ name: v, value: v });
 
         if (t && SLUG_ITEM_RE.test(t) && !existing.includes(t) && !picked.includes(t)) {
-          choices.push({ name: `+ créer « ${t} »`, value: t });
+          choices.push({ name: `+ create "${t}"`, value: t });
         }
 
-        choices.push({ name: '✓ terminer', value: DONE });
+        choices.push({ name: '✓ finish', value: DONE });
         return choices;
       }
     });
@@ -206,7 +206,7 @@ export async function newAgentCommand(opts) {
   });
 
   const title = await input({
-    message: 'titre',
+    message: 'title',
     default: id
       .split('-')
       .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -215,7 +215,7 @@ export async function newAgentCommand(opts) {
 
   const description = await input({
     message: 'description',
-    validate: (v) => (v.trim() ? true : 'requis')
+    validate: (v) => (v.trim() ? true : 'required')
   });
 
   const inputs = await collectList({
@@ -240,7 +240,7 @@ export async function newAgentCommand(opts) {
   });
 
   const model = await select({
-    message: 'modèle',
+    message: 'model',
     choices: modelChoicesForProvider(provider),
     default: defaultModelForProvider(provider),
   });
@@ -256,13 +256,13 @@ export async function newAgentCommand(opts) {
   const estimatedRaw = await input({
     message: 'estimated_tokens',
     default: '',
-    validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'entier attendu')
+    validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'expected an integer')
   });
 
   const filename = await input({
-    message: 'fichier',
+    message: 'file',
     default: `${id}.md`,
-    validate: (v) => (v.endsWith('.md') ? true : 'doit finir par .md')
+    validate: (v) => (v.endsWith('.md') ? true : 'must end with .md')
   });
 
   const targetFile = await writeAgentDraft({
@@ -281,13 +281,13 @@ export async function newAgentCommand(opts) {
       filename,
     },
     askOverwrite: (relativeFile) => confirm({
-      message: `${relativeFile} existe. Écraser ?`,
+      message: `${relativeFile} already exists. Overwrite?`,
       default: false,
     }),
   });
   if (!targetFile) return;
 
-  console.log(style.muted(`Dossier canonique : ${DEFAULT_AGENTS_DIR}`));
+  console.log(style.muted(`Canonical directory: ${DEFAULT_AGENTS_DIR}`));
   console.log(line.success(path.relative(root, targetFile)));
 }
 
@@ -304,12 +304,12 @@ export async function newAgentShellCommand({ root, shell }) {
     validate: (v) => validateAgentId(context.existingIds, v),
   });
 
-  const title = await askShellValue(shell, 'titre', {
+  const title = await askShellValue(shell, 'title', {
     defaultValue: defaultTitleFromId(id),
   });
 
   const description = await askShellValue(shell, 'description', {
-    validate: (v) => (v.trim() ? true : 'requis'),
+    validate: (v) => (v.trim() ? true : 'required'),
   });
 
   if (inputSuggestions.length) {
@@ -321,7 +321,7 @@ export async function newAgentShellCommand({ root, shell }) {
     shell.log(`{#797C81-fg}Output suggestions: ${context.existingOutputs.join(', ')}{/}`);
   }
   const outputs = parseCsvList(await askShellValue(shell, 'outputs (comma separated)', {
-    validate: (v) => (parseCsvList(v).length > 0 ? true : 'au moins une output requise'),
+    validate: (v) => (parseCsvList(v).length > 0 ? true : 'at least one output is required'),
   }));
 
   if (context.existingTags.length) {
@@ -332,7 +332,7 @@ export async function newAgentShellCommand({ root, shell }) {
   const provider = await askShellChoice(shell, 'provider', PROVIDERS, 'claude');
   const model = await askShellChoice(
     shell,
-    'modèle',
+    'model',
     modelChoicesForProvider(provider),
     defaultModelForProvider(provider)
   );
@@ -341,12 +341,12 @@ export async function newAgentShellCommand({ root, shell }) {
     : '';
 
   const estimatedTokens = await askShellValue(shell, 'estimated_tokens (optional)', {
-    validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'entier attendu'),
+    validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'expected an integer'),
   });
 
-  const filename = await askShellValue(shell, 'fichier', {
+  const filename = await askShellValue(shell, 'file', {
     defaultValue: `${id}.md`,
-    validate: (v) => (v.endsWith('.md') ? true : 'doit finir par .md'),
+    validate: (v) => (v.endsWith('.md') ? true : 'must end with .md'),
   });
 
   const targetFile = await writeAgentDraft({
@@ -365,13 +365,13 @@ export async function newAgentShellCommand({ root, shell }) {
       filename,
     },
     askOverwrite: async (relativeFile) => {
-      const overwrite = await askShellValue(shell, `${relativeFile} existe. Écraser ? [y/N]`, {
+      const overwrite = await askShellValue(shell, `${relativeFile} already exists. Overwrite? [y/N]`, {
         defaultValue: 'n',
         normalize: (v) => v.toLowerCase(),
-        validate: (v) => (['y', 'yes', 'n', 'no'].includes(v.toLowerCase()) ? true : 'réponds y ou n'),
+        validate: (v) => (['y', 'yes', 'n', 'no'].includes(v.toLowerCase()) ? true : 'answer y or n'),
       });
       if (!['y', 'yes'].includes(overwrite)) {
-        shell.log(`{#797C81-fg}Création annulée.{/}`);
+        shell.log(`{#797C81-fg}Creation cancelled.{/}`);
         return false;
       }
       return true;
@@ -400,6 +400,6 @@ function renderAgentFile({ title, id, description, inputs, outputs, tags, provid
   if (model) lines.push(`- **model**: ${model}`);
   if (permissionMode) lines.push(`- **permission_mode**: ${permissionMode}`);
   if (estimatedTokens) lines.push(`- **estimated_tokens**: ${estimatedTokens}`);
-  lines.push('', '---', '', '## Prompt', '', '<!-- Ton prompt ici -->', '');
+  lines.push('', '---', '', '## Prompt', '', '<!-- Your prompt here -->', '');
   return lines.join('\n');
 }
