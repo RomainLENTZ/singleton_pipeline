@@ -290,8 +290,23 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
       }
     }
 
-    for (const outputName of Object.keys(step.outputs || {})) {
+    for (const [outputName, rawSink] of Object.entries(step.outputs || {})) {
       availablePipeOutputs.add(`${step.agent}.${outputName}`);
+
+      if (typeof rawSink !== 'string') continue;
+      if (!rawSink.startsWith('$FILE:') && !rawSink.startsWith('$FILES:')) continue;
+
+      let sink = rawSink;
+      for (const [id, val] of Object.entries(inputValues)) {
+        sink = sink.replaceAll(`$INPUT:${id}`, val);
+      }
+      const prefix = sink.startsWith('$FILE:') ? '$FILE:' : '$FILES:';
+      const rawPath = sink.slice(prefix.length).trim();
+      const absOut = path.isAbsolute(rawPath) ? rawPath : path.resolve(cwd, rawPath);
+      const rel = path.relative(cwd, absOut);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        errors.push(`${label} output "${outputName}" sink resolves outside project root: ${rawPath}`);
+      }
     }
   }
 

@@ -17,11 +17,14 @@ const loadOpen = ref(false);
 const savedPipelines = ref([]);
 
 async function save() {
-  const payload = {
-    ...props.pipeline.toPipelineJson(),
-    nodes: props.pipeline.nodes.value,
-    edges: props.pipeline.edges.value
-  };
+  let json;
+  try {
+    json = props.pipeline.toPipelineJson();
+  } catch (e) {
+    push(e.message, 'error');
+    return;
+  }
+  const payload = { ...json, nodes: props.pipeline.nodes.value, edges: props.pipeline.edges.value };
   const res = await fetch('/api/pipelines', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -33,7 +36,13 @@ async function save() {
 }
 
 function exportCli() {
-  const json = props.pipeline.toPipelineJson();
+  let json;
+  try {
+    json = props.pipeline.toPipelineJson();
+  } catch (e) {
+    push(e.message, 'error');
+    return;
+  }
   exportedJson.value = JSON.stringify(json, null, 2);
   exportedCli.value = `singleton run --pipeline ./pipelines/${json.name}.json`;
   exportOpen.value = true;
