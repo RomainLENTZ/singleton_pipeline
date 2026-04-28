@@ -181,6 +181,28 @@ This separation is intentional:
 - runs record execution and outputs
 - the target project remains the source of truth
 
+## Screenshots
+
+### Home
+
+![Singleton home screen](.github/assets/singleton_img_home.png)
+
+### Help
+
+![Singleton help screen](.github/assets/singleton_img_help.png)
+
+### Pipeline Run
+
+![Singleton pipeline run](.github/assets/singleton_img_pipeline.png)
+
+### Pipeline Summary
+
+![Singleton pipeline summary](.github/assets/singleton_img_pipeline_finished.png)
+
+### Serve Mode
+
+![Singleton serve mode](.github/assets/singleton_img_serve.png)
+
 ## CLI
 
 Run a pipeline:
