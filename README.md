@@ -1,68 +1,62 @@
 # Singleton Pipeline Builder (Beta)
 
-Singleton is a local-first multi-agent pipeline runner for codebases. It lets you define agents as Markdown files, connect them visually, execute them with Claude or Codex, inspect runs, and commit generated deliverables safely.
+Singleton is a local-first multi-agent pipeline runner for codebases. It lets you define agents as Markdown files, connect them visually, execute them with Claude or Codex, inspect runs, and commit generated deliverables.
 
-Singleton is local-first:
-- agents live canonically in `.singleton/agents`
-- pipelines live in `.singleton/pipelines`
-- run artifacts live in `.singleton/runs`
+Singleton stores everything inside the target project:
+
+- agents in `.singleton/agents`
+- pipelines in `.singleton/pipelines`
+- run artifacts in `.singleton/runs`
 
 ## Status
 
-Singleton is currently an early beta.
-
-What that means in practice:
+Singleton is an early beta.
 
 - the core local workflow is working
 - Claude and Codex runners are supported
-- the pipeline format is usable, but may still evolve
-- the CLI and builder UX are improving quickly
-- the project is best suited today for early adopters and local experimentation
+- the pipeline format may still evolve
+- CLI and builder UX are under active development
 
 ## Features
 
-- Scan agents from `.singleton/agents` first, then `.claude/agents` for compatibility.
-- Create new Singleton agents from the CLI or from the REPL with a guided `## Config` scaffold.
-- Run pipelines with `$INPUT`, `$FILE`, `$PIPE`, and `$FILES` resolution.
-- Support multiple runners:
-  - `claude`
-  - `codex`
-- Show visible `preflight checks` before execution.
-- Print a run recap with provider, model, status, time, turns, cost, totals, and written files.
-- Keep a versioned run workspace in `.singleton/runs/<run-id>`.
-- Commit the last run deliverables with `/commit-last`.
-- Start the builder API from the REPL with `/serve` and stop it with `/stop`.
-
-## Planned Improvements
-
-- richer validation and more test coverage around multi-provider execution
-- better npm packaging and installation flow
-- more polished builder UX for agents, variables, and provider settings
-- stronger review and run workflows, including safer delivery and commit flows
-- additional provider integrations where the runtime model makes sense
+- Scan agents from `.singleton/agents`, with fallback to `.claude/agents`
+- Create agents via CLI or REPL with a guided `## Config` scaffold
+- Run pipelines with `$INPUT`, `$FILE`, `$PIPE`, and `$FILES`
+- Run agents with Claude or Codex
+- Preflight validation before execution
+- Execution recap with provider, model, status, duration, cost, and written files
+- Versioned run workspace in `.singleton/runs/<run-id>`
+- Commit deliverables with `/commit-last`
+- Start and stop the builder API with `/serve` and `/stop`
 
 ## Supported Providers
 
-- `claude`
-  - runs Singleton Markdown agents through the local Claude CLI
-  - supports optional `permission_mode` in agent or step config
-- `codex`
-  - runs Singleton Markdown agents through the local Codex CLI
-  - automatically injects project instructions discovered from `AGENTS.md` and `AGENTS.override.md`
+### `claude`
 
-Important:
-- `.singleton/agents` contains Singleton agents executed by the pipeline runner
-- `AGENTS.md` is not a Singleton agent
-- `AGENTS.md` is Codex project context that Singleton forwards only to Codex runs
+- executes agents through the local Claude CLI
+- supports optional `permission_mode`
+
+### `codex`
+
+- executes agents through the local Codex CLI
+- automatically injects project instructions from:
+  - `AGENTS.md`
+  - `AGENTS.override.md`
+
+Notes:
+
+- `.singleton/agents` contains executable Singleton agents
+- `AGENTS.md` is not treated as an agent
+- `AGENTS.md` is forwarded only to Codex as project context
 
 ## Requirements
 
 - Node.js 20+
 - npm
-- `claude` in your shell for real Claude runs
-- `codex` in your shell for real Codex runs
+- `claude` available in your shell for Claude runs
+- `codex` available in your shell for Codex runs
 
-Dry-runs do not call any LLM CLI.
+Dry runs do not call any LLM CLI.
 
 ## Install
 
@@ -70,22 +64,22 @@ Dry-runs do not call any LLM CLI.
 npm install
 ```
 
-Run the CLI locally:
+Run locally:
 
 ```bash
 npm run singleton -- --help
 ```
 
-Or link it globally for local development:
+Or link globally:
 
 ```bash
 npm link
 singleton --help
 ```
 
-## Project Model
+## Project Structure
 
-Each target project owns its own Singleton workspace:
+Each project owns its own workspace:
 
 ```txt
 my-project/
@@ -96,11 +90,11 @@ my-project/
     runs/
 ```
 
-Important:
-- `.singleton/` belongs to the target project, not to this repo.
-- `singleton_pipeline` is the tool.
-- `.claude/agents` is still scanned for existing Claude setups.
-- `AGENTS.md` and `AGENTS.override.md` are treated as Codex project instructions, not as Singleton agents.
+Notes:
+
+- `.singleton/` belongs to the target project
+- `.claude/agents` is scanned for compatibility
+- `AGENTS.md` is only used for Codex context
 
 ## Pipeline Model
 
@@ -109,7 +103,38 @@ A pipeline is a directed graph:
 - input nodes provide runtime values or files
 - agent nodes execute Markdown agents
 - edges map outputs to downstream inputs
-- references like `$PIPE:agent.output` are the serialized form of those edges
+
+Steps are executed in dependency order based on `$PIPE` references.
+
+References are serialized using:
+
+- `$INPUT:<id>`
+- `$FILE:<path>`
+- `$PIPE:<agent>.<output>`
+- `$FILES:<dir>`
+
+If no provider is specified, Singleton defaults to `claude`.
+
+## Minimal Pipeline Example
+
+```json
+{
+  "steps": [
+    {
+      "agent": "code-generator",
+      "inputs": {
+        "spec": "$INPUT:input-spec"
+      }
+    },
+    {
+      "agent": "code-review",
+      "inputs": {
+        "source_code": "$PIPE:code-generator.source_code"
+      }
+    }
+  ]
+}
+```
 
 ## Quickstart
 
@@ -119,41 +144,42 @@ Scan a project:
 node packages/cli/src/index.js scan /path/to/project
 ```
 
-Start the API server for a project:
+Start the API server:
 
 ```bash
 node packages/cli/src/index.js serve --root /path/to/project
 ```
 
-Start the web builder:
+Start the builder:
 
 ```bash
 cd packages/web
 npm run dev
 ```
 
-Then open `http://localhost:5173`.
-
-## Example Project
-
-An official mixed-provider example lives in:
+Then open:
 
 ```txt
-examples/mixed-claude-codex
+http://localhost:5173
 ```
 
-It includes:
+## Workflow
 
-- two Claude agents in `.claude/agents`
-- one Codex agent in `.singleton/agents`
-- two Codex instruction files: `AGENTS.md` and `src/AGENTS.md`
-- a mixed pipeline at `.singleton/pipelines/contact-view-polish-mixed.json`
+The typical workflow looks like this:
 
-Try it with:
+1. scan a target project for available agents
+2. create or refine agents in `.singleton/agents`
+3. build or edit a pipeline in `.singleton/pipelines`
+4. run the pipeline from the CLI or REPL
+5. inspect the run summary and generated artifacts
+6. commit project deliverables with `/commit-last`
 
-```bash
-node packages/cli/src/index.js run --pipeline examples/mixed-claude-codex/.singleton/pipelines/contact-view-polish-mixed.json --dry-run
-```
+This separation is intentional:
+
+- agents define reusable behavior
+- pipelines define orchestration
+- runs record execution and outputs
+- the target project remains the source of truth
 
 ## CLI
 
@@ -163,25 +189,25 @@ Run a pipeline:
 node packages/cli/src/index.js run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json
 ```
 
-Dry-run a pipeline:
+Dry run:
 
 ```bash
 node packages/cli/src/index.js run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json --dry-run
 ```
 
-Verbose execution:
+Verbose:
 
 ```bash
 node packages/cli/src/index.js run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json --verbose
 ```
 
-Start the interactive shell:
+Start the REPL:
 
 ```bash
 node packages/cli/src/index.js
 ```
 
-Main REPL commands:
+Commands:
 
 ```txt
 /run <name> [--dry] [--verbose]
@@ -195,32 +221,50 @@ Main REPL commands:
 /quit
 ```
 
-Autocomplete is available with `Tab`:
+Autocomplete is available with `Tab`.
+
+## REPL
+
+The interactive shell is more than a command launcher. It provides:
+
+- command autocomplete with `Tab`
+- persistent command history
+- scrollable logs
+- a pipeline execution mode with step status and live footer metadata
+- a permanent footer with agent count, pipeline count, and active `/serve` state
+- inline `/new` prompts inside the shell input
+
+Useful runtime commands:
+
+- `/scan` refreshes the agent cache
+- `/serve` starts the builder API server
+- `/stop` stops the builder API server
+- `/commit-last` stages and commits the last run deliverables
+
+## Example Project
+
+An official mixed-provider example lives in:
 
 ```txt
-/ru<Tab>            -> /run
-/run vue<Tab>       -> completes a pipeline name
-/run pipeline <Tab> -> suggests flags
+examples/mixed-claude-codex
 ```
 
-## Agent Discovery
+It includes:
 
-Discovery order:
+- Claude agents in `.claude/agents`
+- a Codex agent in `.singleton/agents`
+- Codex instruction files in `AGENTS.md`
+- a mixed pipeline
 
-1. `.singleton/agents/*.md`
-2. `.claude/agents/*.md`
+Run it with:
 
-If the same `id` exists in both places, `.singleton/agents` wins.
-
-Each scanned agent keeps:
-- its `provider`
-- its `source`
-- its absolute file path
+```bash
+node packages/cli/src/index.js run --pipeline examples/mixed-claude-codex/.singleton/pipelines/contact-view-polish-mixed.json --dry-run
+```
 
 ## Agent Format
 
-Agents are Markdown files with a `## Config` section and a prompt body.
-Singleton creates them in `.singleton/agents` by default.
+Agents are Markdown files with a `## Config` section and a prompt.
 
 ```markdown
 # Code Generator
@@ -228,25 +272,20 @@ Singleton creates them in `.singleton/agents` by default.
 ## Config
 
 - **id**: code-generator
-- **description**: Generates source code from a specification
+- **description**: Generates source code
 - **inputs**: spec, guidelines
 - **outputs**: source_code
-- **tags**: code, generation
 - **provider**: claude
 - **model**: claude-sonnet-4-6
-- **permission_mode**: bypassPermissions
 
 ---
 
 ## Prompt
 
-You are a senior software engineer.
-
-Use `<spec>` and `<guidelines>` to generate the requested source code.
-Return only the generated code.
+Generate the requested code.
 ```
 
-Required config fields:
+Required fields:
 
 - `id`
 - `description`
@@ -261,22 +300,9 @@ Optional fields:
 - `permission_mode`
 - `estimated_tokens`
 
-Notes:
-- `permission_mode` is currently useful for `claude`.
-- `bypassPermissions` is opt-in. If omitted, Claude runs use the CLI default behavior.
+## Data Flow & References
 
-## Pipeline Variables
-
-Pipelines can define input nodes that act like runtime variables.
-
-Typical uses:
-
-- a project brief
-- a file path
-- a component name
-- a free-form instruction
-
-Example input node:
+Input node example:
 
 ```json
 {
@@ -289,208 +315,172 @@ Example input node:
 }
 ```
 
-At execution time:
+Resolution rules:
 
-- in normal mode, Singleton prompts for missing values
-- in `--dry-run`, placeholder values are used
-- file inputs are read from disk and injected into the agent prompt
-- text inputs are injected as plain values
+- prompts for missing values
+- reads files from disk
+- injects values into prompts
 
-Those variables are then referenced from steps through `$INPUT:<id>`.
+Agent outputs are kept in memory during execution and can be written to disk using `$FILE` or `$FILES`.
 
-## Pipeline References
-
-`$INPUT:<id>` resolves a value from an input node:
+References:
 
 ```json
 {
-  "component_request": "$INPUT:input-request"
-}
-```
-
-`$FILE:<path>` reads or writes a file:
-
-```json
-{
-  "spec": "$FILE:docs/spec.md"
-}
-```
-
-`$PIPE:<agent>.<output>` passes a previous step output to another step:
-
-```json
-{
-  "source_code": "$PIPE:code-generator.source_code"
-}
-```
-
-`$FILES:<dir>` writes multiple files from a JSON manifest returned by an agent:
-
-```json
-{
+  "component_request": "$INPUT:input-request",
+  "spec": "$FILE:docs/spec.md",
+  "source_code": "$PIPE:code-generator.source_code",
   "files": "$FILES:src/generated"
 }
 ```
 
-## Preflight Checks
+How data moves through a run:
 
-Every run starts with a visible `preflight checks` step.
+- `$INPUT` injects runtime values into a step
+- `$FILE` reads project files into prompts or writes outputs back to disk
+- `$PIPE` passes a previous step output to a downstream step
+- `$FILES` lets an agent emit multiple files in one output
 
-Preflight validates:
+By default, step outputs stay in memory unless a sink explicitly writes them.
 
-- pipeline inputs
-- file input resolution
-- agent file existence
-- agent parsing
-- provider validity
-- CLI availability for each used provider
-- `$INPUT` references
-- `$PIPE` references
-- `$FILE` input resolution
-- sink paths escaping the project root
+## `$FILES` Output Format
 
-Preflight can emit:
+```json
+{
+  "files": [
+    { "path": "src/a.js", "content": "..." },
+    { "path": "src/b.js", "content": "..." }
+  ]
+}
+```
 
-- `info`
-- `warnings`
-- blocking `errors`
+## Builder
+
+The builder helps visualize and connect agents in a pipeline graph.
+
+It is designed to mirror the runtime model:
+
+- input nodes become `$INPUT` references
+- agent nodes become pipeline steps
+- edges become input/output mappings
+- graph order is converted into execution order
+
+## Preflight
+
+Every run starts with validation.
+
+Checks include:
+
+- inputs
+- file paths
+- agent files
+- providers
+- CLI availability
+- `$INPUT`, `$PIPE`, and `$FILE` references
+- unsafe output paths
+
+Preflight emits:
+
+- info
+- warnings
+- blocking errors
 
 Examples:
 
-- missing `model` -> warning
+- missing input file -> error
 - unknown provider -> error
-- `$FILE:` sink outside the project root -> error
+- invalid `permission_mode` for Claude -> error
+- missing model -> warning
+- Codex instruction files detected -> info
 
-## Multi-LLM Execution
-
-Singleton normalizes runner execution behind a common interface.
-
-Current providers:
-
-- `claude`
-- `codex`
-
-Provider resolution is intentionally simple:
-
-1. `step.provider`
-2. `agent.provider`
-3. fallback to `claude`
-
-Model resolution:
-
-1. `step.model`
-2. `agent.model`
-3. no explicit model
-
-## Codex Project Instructions
-
-For Codex runs, Singleton automatically discovers project instructions from:
-
-- `AGENTS.override.md`
-- otherwise `AGENTS.md`
-
-These files are aggregated from the project tree and injected into Codex as additional project context.
-
-This means:
-
-- Singleton agents still live in `.singleton/agents`
-- `AGENTS.md` is not scanned as an agent
-- Codex runs can still respect repo-local working agreements
-
-The preflight step also reports how many Codex instruction files were detected.
-
-## `/serve` And `/stop`
-
-From the REPL:
-
-- `/serve` starts the builder API server
-- `/stop` stops it
-
-The shell footer keeps showing a centered runtime state while the server is running.
-
-## `/commit-last`
-
-`/commit-last` uses the latest run manifest from the current project:
-
-- reads `.singleton/runs/latest/run-manifest.json`
-- keeps real project deliverables
-- ignores `.singleton` artifacts
-- includes files directly edited during the run
-- prompts for a commit message
-- runs `git add` only on the detected deliverables
-
-This is intended for real runs, not `--dry-run`.
+If preflight fails, Singleton stops before any provider CLI is called.
 
 ## Execution Recap
 
-After a run, Singleton prints a summary with:
+Each run prints:
 
-- one line per step
-- provider
-- model
-- status
+- step status
+- provider and model
+- permission mode when explicitly configured
 - duration
-- turn count
+- turns
 - cost when available
-- total duration and total cost
-- written files and detected deliverables
+- written files
 
-Run manifests are written into:
+Artifacts:
 
 ```txt
 .singleton/runs/<run-id>/run-manifest.json
 .singleton/runs/latest/run-manifest.json
 ```
 
-## Tests
+Run manifests include:
 
-Run the current test suite:
+- pipeline name
+- project root
+- deliverables
+- intermediate files
+- per-step execution stats
+
+## `/commit-last`
+
+Uses the latest run manifest:
+
+- includes real deliverables
+- excludes `.singleton`
+- includes modified project files
+- prompts for a commit message
+- runs `git add`
+
+This makes the common loop explicit:
+
+1. run a pipeline
+2. inspect the result
+3. commit only the real project deliverables
+
+Intermediate `.singleton` artifacts are excluded on purpose.
+
+## Multi-Provider Model
+
+Singleton agents are provider-agnostic documents with optional execution preferences.
+
+In practice:
+
+- the agent file defines inputs, outputs, prompt, provider, and optional model
+- the runner is chosen at execution time
+- `step.provider` overrides `agent.provider`
+- if nothing is set, Singleton falls back to `claude`
+
+Current behavior differs by provider:
+
+- Claude runs Markdown agents directly through the Claude CLI
+- Codex runs Markdown agents through the Codex CLI and also receives project context from `AGENTS.md`
+
+That means:
+
+- `.singleton/agents` stays the canonical agent format
+- provider-specific conventions remain integrations, not the core model
+
+## Tests
 
 ```bash
 npm test
-```
-
-Watch mode:
-
-```bash
 npm run test:watch
 ```
 
-Current tests cover core parser, preflight, and builder graph logic.
+Covers parser, preflight, and builder graph logic.
 
-## Repository Structure
+## Repository Layout
 
 ```txt
-packages/cli      CLI, REPL, scanner, parser, executor, runners
-packages/server   Express API for the builder
-packages/web      Vue 3 + Vue Flow builder
-```
-
-## Useful Commands
-
-```bash
-# Scan agents in a project
-node packages/cli/src/index.js scan /path/to/project
-
-# Start API server
-node packages/cli/src/index.js serve --root /path/to/project
-
-# Start web UI in dev mode
-cd packages/web && npm run dev
-
-# Run a pipeline
-node packages/cli/src/index.js run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json
-
-# Dry-run a pipeline
-node packages/cli/src/index.js run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json --dry-run
-
-# Run tests
-npm test
+packages/cli      CLI, executor, runners
+packages/server   API
+packages/web      builder UI
 ```
 
 ## Notes
 
-- `.singleton/agents.json` is a cache file.
-- `.singleton/pipelines` contains project-local pipeline definitions.
-- `.singleton/runs` contains run artifacts and manifests.
-- Real deliverables should be written to normal project paths, not inside `.singleton`.
+- `.singleton/agents.json` is a cache
+- pipelines are project-local
+- run artifacts stay in `.singleton`
+- deliverables should be written to normal project files
