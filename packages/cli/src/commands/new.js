@@ -5,11 +5,15 @@ import { style, line } from '../theme.js';
 import { scanAgents } from '../scanner.js';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
-const DEFAULT_MODELS = [
+const CLAUDE_MODELS = [
   { name: 'claude-opus-4-7', value: 'claude-opus-4-7' },
   { name: 'claude-sonnet-4-6', value: 'claude-sonnet-4-6' },
   { name: 'claude-haiku-4-5', value: 'claude-haiku-4-5' },
   { name: '(aucun)', value: '' }
+];
+const PROVIDERS = [
+  { name: 'claude', value: 'claude' },
+  { name: 'codex', value: 'codex' },
 ];
 
 function uniqueSorted(values) {
@@ -115,11 +119,22 @@ export async function newAgentCommand(opts) {
     hint: 'tag'
   });
 
-  const model = await select({
-    message: 'modèle',
-    choices: DEFAULT_MODELS,
-    default: 'claude-sonnet-4-6'
+  const provider = await select({
+    message: 'provider',
+    choices: PROVIDERS,
+    default: 'claude'
   });
+
+  const model = provider === 'claude'
+    ? await select({
+        message: 'modèle',
+        choices: CLAUDE_MODELS,
+        default: 'claude-sonnet-4-6'
+      })
+    : await input({
+        message: 'modèle',
+        default: '',
+      });
 
   const estimatedRaw = await input({
     message: 'estimated_tokens',
@@ -155,7 +170,7 @@ export async function newAgentCommand(opts) {
     // file doesn't exist
   }
 
-  const content = renderAgentFile({ title, id, description, inputs, outputs, tags, model, estimatedTokens: estimatedRaw });
+  const content = renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, estimatedTokens: estimatedRaw });
 
   await fs.mkdir(targetDir, { recursive: true });
   await fs.writeFile(targetFile, content);
@@ -163,7 +178,7 @@ export async function newAgentCommand(opts) {
   console.log(line.success(path.relative(root, targetFile)));
 }
 
-function renderAgentFile({ title, id, description, inputs, outputs, tags, model, estimatedTokens }) {
+function renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, estimatedTokens }) {
   const lines = [
     `# ${title}`,
     '',
@@ -175,6 +190,7 @@ function renderAgentFile({ title, id, description, inputs, outputs, tags, model,
     `- **outputs**: ${outputs.join(', ')}`
   ];
   if (tags.length) lines.push(`- **tags**: ${tags.join(', ')}`);
+  if (provider) lines.push(`- **provider**: ${provider}`);
   if (model) lines.push(`- **model**: ${model}`);
   if (estimatedTokens) lines.push(`- **estimated_tokens**: ${estimatedTokens}`);
   lines.push('', '---', '', '## Prompt', '', '<!-- Ton prompt ici -->', '');

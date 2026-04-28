@@ -55,6 +55,7 @@ export function parseAgentFile(content, file) {
     inputs: config.inputs || [],
     outputs: config.outputs || [],
     tags: config.tags || [],
+    provider: config.provider,
     model: config.model,
     estimated_tokens: config.estimated_tokens ? Number(config.estimated_tokens) : undefined,
     file,

@@ -1,12 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import fg from 'fast-glob';
 import { input } from '@inquirer/prompts';
 import { parseAgentFile } from './parser.js';
 import { style, line } from './theme.js';
 import { createTimeline } from './timeline.js';
 import { C } from './shell.js';
+import { getRunner } from './runners/index.js';
 
 export async function loadPipeline(filePath) {
   const raw = await fs.readFile(filePath, 'utf8');
@@ -160,31 +160,17 @@ function parseOutputs(text, outputNames) {
   return result;
 }
 
-function runClaudeCLI({ systemPrompt, userMessage, model, cwd }) {
-  const args = ['-p', '--output-format', 'json', '--permission-mode', 'bypassPermissions', '--system-prompt', systemPrompt];
-  if (model) args.push('--model', model);
+function resolveProvider(step, agent) {
+  return step.provider || agent.provider || 'claude';
+}
 
-  return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code !== 0) {
-        return reject(new Error(`claude exited ${code}: ${stderr.trim() || stdout.trim()}`));
-      }
-      try {
-        const parsed = JSON.parse(stdout);
-        resolve(parsed);
-      } catch (err) {
-        reject(new Error(`failed to parse claude output: ${err.message}\n${stdout.slice(0, 500)}`));
-      }
-    });
-    child.stdin.write(userMessage);
-    child.stdin.end();
-  });
+function resolveModel(step, agent) {
+  return step.model || agent.model || null;
+}
+
+function failStep(timeline, index, shortMessage, fullMessage = shortMessage) {
+  timeline.setError(index, String(shortMessage).slice(0, 60));
+  throw new Error(fullMessage);
 }
 
 function printVerboseBlock(label, content, colorFn = (s) => s) {
@@ -423,150 +409,150 @@ export async function runPipeline(filePath, opts = {}) {
   const verboseLog = [];
   const stats = [];
 
-  for (let i = 0; i < pipeline.steps.length; i++) {
-    const step = pipeline.steps[i];
-    timeline.setRunning(i);
+  try {
+    for (let i = 0; i < pipeline.steps.length; i++) {
+      const step = pipeline.steps[i];
+      timeline.setRunning(i);
 
-    if (!step.agent_file) {
-      timeline.setError(i, `no agent_file`);
-      process.exit(1);
-    }
-
-    const agentFilePath = path.isAbsolute(step.agent_file)
-      ? step.agent_file
-      : path.resolve(cwd, step.agent_file);
-    const raw = await fs.readFile(agentFilePath, 'utf8');
-    const agent = parseAgentFile(raw, agentFilePath);
-    if (!agent) {
-      timeline.setError(i, `failed to parse ${step.agent_file}`);
-      process.exit(1);
-    }
-
-    const outputNames = Object.keys(step.outputs || {});
-    if (outputNames.length === 0) {
-      timeline.setDone(i, 'skipped (no outputs)');
-      stats.push({
-        agent: step.agent,
-        status: 'skipped',
-        seconds: 0,
-        turns: 0,
-        cost: 0,
-      });
-      continue;
-    }
-
-    if (dryRun) {
-      timeline.setDone(i, `dry-run · ${outputNames.join(', ')}`);
-      for (const name of outputNames) registry[`${step.agent}.${name}`] = `(dry-run:${step.agent}.${name})`;
-      stats.push({
-        agent: step.agent,
-        status: 'dry-run',
-        seconds: 0,
-        turns: 0,
-        cost: 0,
-      });
-      continue;
-    }
-
-    const stepIndex = String(i + 1).padStart(2, '0');
-    const stepDir = runDir ? path.join(runDir, `${stepIndex}-${step.agent}`) : null;
-    if (stepDir) await fs.mkdir(stepDir, { recursive: true });
-
-    const resolvedInputs = {};
-    for (const [name, spec] of Object.entries(step.inputs || {})) {
-      resolvedInputs[name] = await resolveInput(spec, { registry, cwd, inputValues, inputDefs });
-    }
-
-    const systemPrompt = agent.prompt || agent.description;
-    const workspaceInfo = stepDir ? { projectRoot: cwd, stepDirRel: path.relative(cwd, stepDir) } : null;
-    const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo);
-
-    if (verbose) {
-      timeline.log(`── system prompt ──`);
-      for (const l of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(l);
-      timeline.log(`── user message ──`);
-      for (const l of userMessage.split('\n').slice(0, 8)) timeline.logMuted(l);
-    }
-
-    const started = Date.now();
-    let result;
-    try {
-      result = await runClaudeCLI({ systemPrompt, userMessage, model: agent.model, cwd });
-    } catch (err) {
-      timeline.setError(i, err.message.slice(0, 60));
-      timeline.end();
-      process.exit(1);
-    }
-    const elapsedSeconds = (Date.now() - started) / 1000;
-    const elapsed = elapsedSeconds.toFixed(1);
-    const text = typeof result.result === 'string' ? result.result : JSON.stringify(result);
-
-    if (verbose) {
-      timeline.log(`── output ──`);
-      for (const l of text.split('\n').slice(0, 20)) timeline.logMuted(l);
-    }
-
-    const parsed = parseOutputs(text, outputNames);
-
-    for (const name of outputNames) {
-      registry[`${step.agent}.${name}`] = parsed[name];
-      let sink = step.outputs[name];
-
-      if (typeof sink === 'string') {
-        for (const [id, val] of Object.entries(inputValues)) {
-          sink = sink.replaceAll(`$INPUT:${id}`, val);
-        }
+      if (!step.agent_file) {
+        failStep(timeline, i, 'no agent_file', `Step "${step.agent}" is missing agent_file.`);
       }
 
-      if (stepDir) sink = rewriteFileSink(sink, { cwd, stepDir });
+      const agentFilePath = path.isAbsolute(step.agent_file)
+        ? step.agent_file
+        : path.resolve(cwd, step.agent_file);
+      const raw = await fs.readFile(agentFilePath, 'utf8');
+      const agent = parseAgentFile(raw, agentFilePath);
+      if (!agent) {
+        failStep(timeline, i, `failed to parse ${step.agent_file}`, `Failed to parse agent file: ${step.agent_file}`);
+      }
 
-      if (typeof sink === 'string' && sink.startsWith('$FILES:')) {
-        const baseDir = sink.slice('$FILES:'.length).trim();
-        const absBase = path.isAbsolute(baseDir) ? baseDir : path.join(cwd, baseDir);
-        const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
-        let manifest;
-        try { manifest = JSON.parse(rawJson); } catch (e) {
-          timeline.setError(i, `$FILES: JSON invalide`);
-          continue;
+      const outputNames = Object.keys(step.outputs || {});
+      if (outputNames.length === 0) {
+        timeline.setDone(i, 'skipped (no outputs)');
+        stats.push({
+          agent: step.agent,
+          status: 'skipped',
+          seconds: 0,
+          turns: 0,
+          cost: 0,
+        });
+        continue;
+      }
+
+      if (dryRun) {
+        timeline.setDone(i, `dry-run · ${outputNames.join(', ')}`);
+        for (const name of outputNames) registry[`${step.agent}.${name}`] = `(dry-run:${step.agent}.${name})`;
+        stats.push({
+          agent: step.agent,
+          status: 'dry-run',
+          seconds: 0,
+          turns: 0,
+          cost: 0,
+        });
+        continue;
+      }
+
+      const stepIndex = String(i + 1).padStart(2, '0');
+      const stepDir = runDir ? path.join(runDir, `${stepIndex}-${step.agent}`) : null;
+      if (stepDir) await fs.mkdir(stepDir, { recursive: true });
+
+      const resolvedInputs = {};
+      for (const [name, spec] of Object.entries(step.inputs || {})) {
+        resolvedInputs[name] = await resolveInput(spec, { registry, cwd, inputValues, inputDefs });
+      }
+
+      const systemPrompt = agent.prompt || agent.description;
+      const workspaceInfo = stepDir ? { projectRoot: cwd, stepDirRel: path.relative(cwd, stepDir) } : null;
+      const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo);
+      const provider = resolveProvider(step, agent);
+      const model = resolveModel(step, agent);
+      const runner = getRunner(provider);
+
+      if (verbose) {
+        timeline.log(`── system prompt ──`);
+        for (const l of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(l);
+        timeline.log(`── user message ──`);
+        for (const l of userMessage.split('\n').slice(0, 8)) timeline.logMuted(l);
+      }
+
+      const started = Date.now();
+      let result;
+      try {
+        result = await runner.run({ cwd, systemPrompt, userPrompt: userMessage, model, verbose });
+      } catch (err) {
+        failStep(timeline, i, err.message, `Step "${step.agent}" failed: ${err.message}`);
+      }
+      const elapsedSeconds = (Date.now() - started) / 1000;
+      const elapsed = elapsedSeconds.toFixed(1);
+      const text = result.text;
+
+      if (verbose) {
+        timeline.log(`── output ──`);
+        for (const l of text.split('\n').slice(0, 20)) timeline.logMuted(l);
+      }
+
+      const parsed = parseOutputs(text, outputNames);
+
+      for (const name of outputNames) {
+        registry[`${step.agent}.${name}`] = parsed[name];
+        let sink = step.outputs[name];
+
+        if (typeof sink === 'string') {
+          for (const [id, val] of Object.entries(inputValues)) {
+            sink = sink.replaceAll(`$INPUT:${id}`, val);
+          }
         }
-        for (const entry of (Array.isArray(manifest) ? manifest : [])) {
-          const absOut = path.join(absBase, entry.path);
+
+        if (stepDir) sink = rewriteFileSink(sink, { cwd, stepDir });
+
+        if (typeof sink === 'string' && sink.startsWith('$FILES:')) {
+          const baseDir = sink.slice('$FILES:'.length).trim();
+          const absBase = path.isAbsolute(baseDir) ? baseDir : path.join(cwd, baseDir);
+          const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
+          let manifest;
+          try { manifest = JSON.parse(rawJson); } catch (e) {
+            failStep(timeline, i, '$FILES: JSON invalide', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
+          }
+          for (const entry of (Array.isArray(manifest) ? manifest : [])) {
+            const absOut = path.join(absBase, entry.path);
+            await fs.mkdir(path.dirname(absOut), { recursive: true });
+            await fs.writeFile(absOut, entry.content);
+            fileWrites.push({
+              absPath: absOut,
+              relPath: path.relative(cwd, absOut),
+              kind: path.relative(cwd, absOut).startsWith('.singleton' + path.sep) ? 'intermediate' : 'deliverable',
+            });
+          }
+        } else if (typeof sink === 'string' && sink.startsWith('$FILE:')) {
+          const outPath = sink.slice('$FILE:'.length).trim();
+          const absOut = path.isAbsolute(outPath) ? outPath : path.join(cwd, outPath);
           await fs.mkdir(path.dirname(absOut), { recursive: true });
-          await fs.writeFile(absOut, entry.content);
+          await fs.writeFile(absOut, parsed[name]);
           fileWrites.push({
             absPath: absOut,
             relPath: path.relative(cwd, absOut),
             kind: path.relative(cwd, absOut).startsWith('.singleton' + path.sep) ? 'intermediate' : 'deliverable',
           });
         }
-      } else if (typeof sink === 'string' && sink.startsWith('$FILE:')) {
-        const outPath = sink.slice('$FILE:'.length).trim();
-        const absOut = path.isAbsolute(outPath) ? outPath : path.join(cwd, outPath);
-        await fs.mkdir(path.dirname(absOut), { recursive: true });
-        await fs.writeFile(absOut, parsed[name]);
-        fileWrites.push({
-          absPath: absOut,
-          relPath: path.relative(cwd, absOut),
-          kind: path.relative(cwd, absOut).startsWith('.singleton' + path.sep) ? 'intermediate' : 'deliverable',
-        });
       }
+
+      const costInfo = result.metadata.costUsd ? ` · $${result.metadata.costUsd.toFixed(4)}` : '';
+      const turnInfo = result.metadata.turns ? ` · ${result.metadata.turns}t` : '';
+      timeline.setDone(i, `${elapsed}s${turnInfo}${costInfo}`);
+      timeline.log(`✓ ${step.agent} — ${elapsed}s${turnInfo}${costInfo}`);
+      stats.push({
+        agent: step.agent,
+        status: 'done',
+        seconds: elapsedSeconds,
+        turns: Number(result.metadata.turns || 0),
+        cost: Number(result.metadata.costUsd || 0),
+      });
     }
-
-    const costInfo = result.total_cost_usd ? ` · $${result.total_cost_usd.toFixed(4)}` : '';
-    const turnInfo = result.num_turns ? ` · ${result.num_turns}t` : '';
-    timeline.setDone(i, `${elapsed}s${turnInfo}${costInfo}`);
-    timeline.log(`✓ ${step.agent} — ${elapsed}s${turnInfo}${costInfo}`);
-    stats.push({
-      agent: step.agent,
-      status: 'done',
-      seconds: elapsedSeconds,
-      turns: Number(result.num_turns || 0),
-      cost: Number(result.total_cost_usd || 0),
-    });
+  } finally {
+    timeline.end();
+    if (shell) shell.exitPipelineMode();
   }
-
-  timeline.end();
-  if (shell) shell.exitPipelineMode();
 
   const detectedDeliverables = dryRun ? [] : detectSnapshotChanges(beforeSnapshot, await snapshotProjectFiles(cwd), cwd);
 
