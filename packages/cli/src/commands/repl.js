@@ -244,13 +244,6 @@ async function showWelcome(root, shell) {
   const stopTagline = shell.createShimmer(TAGLINE, taglineRow, CONTENT_PAD_LEFT);
 
   return () => { stopWelcome(); stopTagline(); };
-  shell.log('');
-  shell.log(`{bold}${pipelines.length}{/} pipelines`);
-  shell.log(`{bold}${agentCount}{/} agents`);
-  shell.log('');
-  shell.log(`Currently running on: {${C.peach}-fg}Claude Code{/}`);
-  shell.log(`{${C.dimV}-fg}type /cli to set your preference{/}`);
-  shell.log('');
 }
 
 async function refreshFooter(root, shell) {

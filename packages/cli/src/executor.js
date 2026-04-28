@@ -19,11 +19,15 @@ export async function loadPipeline(filePath) {
   return pipeline;
 }
 
+// Patterns are always resolved relative to the project root (`cwd`).
+// Absolute paths are accepted as-is. Globs go through fast-glob; the
+// literal-path fallback handles the case where fg returns nothing but
+// the file actually exists on disk.
 async function resolveFileGlob(spec, cwd) {
   const pattern = spec.slice('$FILE:'.length).trim();
-  const abs = path.isAbsolute(pattern) ? pattern : path.join(cwd, pattern);
   const files = await fg(pattern, { cwd, absolute: true, dot: false });
   if (files.length === 0) {
+    const abs = path.isAbsolute(pattern) ? pattern : path.resolve(cwd, pattern);
     try {
       const content = await fs.readFile(abs, 'utf8');
       return [{ path: abs, content }];
@@ -37,6 +41,16 @@ async function resolveFileGlob(spec, cwd) {
     results.push({ path: f, content });
   }
   return results;
+}
+
+// Refuse sink paths that escape the project root after `$INPUT:` interpolation.
+function assertSinkInsideRoot(absSink, cwd, agentName, outputName) {
+  const rel = path.relative(cwd, absSink);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(
+      `Step "${agentName}" output "${outputName}" resolves outside the project root: ${absSink}`
+    );
+  }
 }
 
 function resolvePipeRef(spec, registry) {
@@ -720,7 +734,8 @@ export async function runPipeline(filePath, opts = {}) {
             failStep(timeline, timelineIndex, '$FILES: JSON invalide', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
           }
           for (const entry of (Array.isArray(manifest) ? manifest : [])) {
-            const absOut = path.join(absBase, entry.path);
+            const absOut = path.resolve(absBase, entry.path);
+            assertSinkInsideRoot(absOut, cwd, step.agent, name);
             await fs.mkdir(path.dirname(absOut), { recursive: true });
             await fs.writeFile(absOut, entry.content);
             fileWrites.push({
@@ -731,7 +746,8 @@ export async function runPipeline(filePath, opts = {}) {
           }
         } else if (typeof sink === 'string' && sink.startsWith('$FILE:')) {
           const outPath = sink.slice('$FILE:'.length).trim();
-          const absOut = path.isAbsolute(outPath) ? outPath : path.join(cwd, outPath);
+          const absOut = path.isAbsolute(outPath) ? outPath : path.resolve(cwd, outPath);
+          assertSinkInsideRoot(absOut, cwd, step.agent, name);
           await fs.mkdir(path.dirname(absOut), { recursive: true });
           await fs.writeFile(absOut, parsed[name]);
           fileWrites.push({

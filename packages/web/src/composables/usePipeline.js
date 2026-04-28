@@ -107,11 +107,11 @@ export function usePipeline(agentsRef) {
     edges.value = Array.isArray(data.edges) ? [...data.edges] : [];
 
     for (const n of nodes.value) {
-      const m = n.id.match(/-(\d+)$/);
-      if (m) {
-        const n2 = Number(m[1]);
-        if (n2 > nodeCounter) nodeCounter = n2;
-      }
+      // Match any trailing digits in the id, regardless of separator pattern.
+      const matches = String(n.id).match(/(\d+)/g);
+      if (!matches) continue;
+      const max = Math.max(...matches.map(Number));
+      if (max > nodeCounter) nodeCounter = max;
     }
   }
 
@@ -126,11 +126,17 @@ export function usePipeline(agentsRef) {
     }
 
     const order = [];
-    const visited = new Set();
-    function visit(id) {
-      if (visited.has(id)) return;
-      visited.add(id);
-      for (const e of incoming.get(id) || []) visit(e.source);
+    const state = new Map(); // id -> 'visiting' | 'done'
+    function visit(id, stack = []) {
+      const s = state.get(id);
+      if (s === 'done') return;
+      if (s === 'visiting') {
+        const cycle = [...stack.slice(stack.indexOf(id)), id].join(' → ');
+        throw new Error(`Cycle détecté dans la pipeline: ${cycle}`);
+      }
+      state.set(id, 'visiting');
+      for (const e of incoming.get(id) || []) visit(e.source, [...stack, id]);
+      state.set(id, 'done');
       order.push(id);
     }
     for (const n of nodes.value) visit(n.id);

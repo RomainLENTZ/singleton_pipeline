@@ -4,6 +4,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { discoverCodexProjectInstructions } from './codex-instructions.js';
 
+const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
+
 function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
   const parts = ['Follow the system instructions exactly.', ''];
 
@@ -69,7 +71,7 @@ export const codexRunner = {
   id: 'codex',
   command: 'codex',
 
-  async run({ cwd, projectRoot = cwd, currentDir = cwd, systemPrompt, userPrompt, model }) {
+  async run({ cwd, projectRoot = cwd, currentDir = cwd, systemPrompt, userPrompt, model, timeoutMs = DEFAULT_TIMEOUT_MS }) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'singleton-codex-'));
     const outputFile = path.join(tempDir, 'last-message.txt');
     const projectInstructions = await discoverCodexProjectInstructions(projectRoot, currentDir);
@@ -101,11 +103,22 @@ export const codexRunner = {
 
       const stdoutChunks = [];
       let stderrText = '';
+      let timedOut = false;
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+      }, timeoutMs);
 
       child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
       child.stderr.on('data', (d) => (stderrText += d.toString()));
-      child.on('error', reject);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
       child.on('close', (code) => {
+        clearTimeout(timer);
         const stdout = stdoutChunks.join('');
         const events = stdout
           .split('\n')
@@ -114,6 +127,10 @@ export const codexRunner = {
           .map(safeJsonParse)
           .filter(Boolean);
 
+        if (timedOut) {
+          reject(new Error(`codex timed out after ${Math.round(timeoutMs / 1000)}s`));
+          return;
+        }
         if (code !== 0) {
           const eventError = events.findLast?.((event) => event.type === 'error')?.message
             || [...events].reverse().find((event) => event.type === 'error')?.message;

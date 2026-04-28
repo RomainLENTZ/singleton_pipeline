@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 
+const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
+
 export const claudeRunner = {
   id: 'claude',
   command: 'claude',
 
-  async run({ cwd, systemPrompt, userPrompt, model }) {
+  async run({ cwd, systemPrompt, userPrompt, model, timeoutMs = DEFAULT_TIMEOUT_MS }) {
     const args = [
       '-p',
       '--output-format',
@@ -21,11 +23,26 @@ export const claudeRunner = {
       const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+      }, timeoutMs);
 
       child.stdout.on('data', (d) => (stdout += d.toString()));
       child.stderr.on('data', (d) => (stderr += d.toString()));
-      child.on('error', reject);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
       child.on('close', (code) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          reject(new Error(`claude timed out after ${Math.round(timeoutMs / 1000)}s`));
+          return;
+        }
         if (code !== 0) {
           reject(new Error(`claude exited ${code}: ${stderr.trim() || stdout.trim()}`));
           return;
