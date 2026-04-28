@@ -1,6 +1,6 @@
 # Singleton Pipeline Builder
 
-Build, visualize, and run project-local multi-agent pipelines from Markdown agent files with a visual builder and interactive CLI.
+Singleton is a local-first multi-agent pipeline runner for codebases. It lets you define agents as Markdown files, connect them visually, execute them with Claude or Codex, inspect runs, and commit generated deliverables safely.
 
 Singleton is local-first:
 - agents live canonically in `.singleton/agents`
@@ -20,6 +20,20 @@ Singleton is local-first:
 - Keep a versioned run workspace in `.singleton/runs/<run-id>`.
 - Commit the last run deliverables with `/commit-last`.
 - Start the builder API from the REPL with `/serve` and stop it with `/stop`.
+
+## Supported Providers
+
+- `claude`
+  - runs Singleton Markdown agents through the local Claude CLI
+  - supports optional `permission_mode` in agent or step config
+- `codex`
+  - runs Singleton Markdown agents through the local Codex CLI
+  - automatically injects project instructions discovered from `AGENTS.md` and `AGENTS.override.md`
+
+Important:
+- `.singleton/agents` contains Singleton agents executed by the pipeline runner
+- `AGENTS.md` is not a Singleton agent
+- `AGENTS.md` is Codex project context that Singleton forwards only to Codex runs
 
 ## Requirements
 
@@ -55,6 +69,15 @@ Important:
 - `.claude/agents` is still scanned for existing Claude setups.
 - `AGENTS.md` and `AGENTS.override.md` are treated as Codex project instructions, not as Singleton agents.
 
+## Pipeline Model
+
+A pipeline is a directed graph:
+
+- input nodes provide runtime values or files
+- agent nodes execute Markdown agents
+- edges map outputs to downstream inputs
+- references like `$PIPE:agent.output` are the serialized form of those edges
+
 ## Quickstart
 
 Scan a project:
@@ -77,6 +100,27 @@ npm run dev
 ```
 
 Then open `http://localhost:5173`.
+
+## Example Project
+
+An official mixed-provider example lives in:
+
+```txt
+examples/mixed-claude-codex
+```
+
+It includes:
+
+- two Claude agents in `.claude/agents`
+- one Codex agent in `.singleton/agents`
+- two Codex instruction files: `AGENTS.md` and `src/AGENTS.md`
+- a mixed pipeline at `.singleton/pipelines/contact-view-polish-mixed.json`
+
+Try it with:
+
+```bash
+node packages/cli/src/index.js run --pipeline examples/mixed-claude-codex/.singleton/pipelines/contact-view-polish-mixed.json --dry-run
+```
 
 ## CLI
 

@@ -1,6 +1,12 @@
 node_modules/
 .singleton/
 examples/
+!examples/
+examples/*
+!examples/mixed-claude-codex/
+!examples/mixed-claude-codex/**
+examples/mixed-claude-codex/.singleton/agents.json
+examples/mixed-claude-codex/.singleton/runs/
 pipelines/
 .claude/
 .vscode/
