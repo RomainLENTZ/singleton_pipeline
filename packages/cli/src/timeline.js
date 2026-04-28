@@ -97,10 +97,11 @@ export function createTimeline(stepNames, widgets = null) {
     log(text)      { logPanel.log(`{${C.blue}-fg}${text}{/}`);  screen.render(); },
     logMuted(text) { logPanel.log(`{${C.dimV}-fg}${text}{/}`);  screen.render(); },
 
-    setRunning(i) {
+    setRunning(i, info = '') {
       if (spinnerInterval) { clearInterval(spinnerInterval); spinnerInterval = null; }
       runningIdx = i;
       statuses[i] = 'running';
+      meta[i] = info;
       renderTimeline();
       spinnerInterval = setInterval(() => { spinnerFrame++; renderTimeline(spinnerFrame); }, 80);
     },

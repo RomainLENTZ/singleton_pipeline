@@ -199,6 +199,25 @@ function failStep(timeline, index, shortMessage, fullMessage = shortMessage) {
   throw new Error(fullMessage);
 }
 
+function createSilentTimeline() {
+  return {
+    log() {},
+    logMuted() {},
+    setRunning() {},
+    setDone() {},
+    setError() {},
+    end() {},
+  };
+}
+
+function formatStepRuntimeMeta({ provider, model, permissionMode }) {
+  const parts = [];
+  if (provider) parts.push(provider);
+  if (model) parts.push(model);
+  if (permissionMode) parts.push(`perm:${permissionMode}`);
+  return parts.join(' · ');
+}
+
 function commandExists(command) {
   return new Promise((resolve) => {
     const child = spawn('which', [command], { stdio: 'ignore' });
@@ -276,6 +295,9 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     }
     if (provider !== 'claude' && permissionMode) {
       warnings.push(`${label} defines permission_mode "${permissionMode}", but provider "${provider}" ignores it.`);
+    }
+    if (provider === 'claude' && permissionMode === 'bypassPermissions') {
+      infos.push(`${label} runs Claude with permission_mode "${permissionMode}".`);
     }
 
     for (const [name, spec] of Object.entries(step.inputs || {})) {
@@ -396,6 +418,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     agent: s.agent,
     provider: s.provider || '—',
     model: s.model || '—',
+    permission: s.permissionMode || '—',
     status: s.status,
     time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
     turns: formatTurns(s.turns),
@@ -407,6 +430,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     agent: 'TOTAL',
     provider: '—',
     model: '—',
+    permission: '—',
     status: dryRun ? 'dry-run' : 'done',
     time: formatSeconds(totalSeconds),
     turns: formatTurns(totalTurns),
@@ -419,6 +443,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     agent: Math.max(5, ...allRows.map((r) => visibleLength(r.agent))),
     provider: Math.max(8, ...allRows.map((r) => visibleLength(r.provider))),
     model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
+    permission: Math.max(4, ...allRows.map((r) => visibleLength(r.permission))),
     status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
     time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
     turns: Math.max(5, ...allRows.map((r) => visibleLength(r.turns))),
@@ -430,6 +455,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     '─'.repeat(widths.agent + 2),
     '─'.repeat(widths.provider + 2),
     '─'.repeat(widths.model + 2),
+    '─'.repeat(widths.permission + 2),
     '─'.repeat(widths.status + 2),
     '─'.repeat(widths.time + 2),
     '─'.repeat(widths.turns + 2),
@@ -442,6 +468,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
       ` ${padVisible(r.agent, widths.agent)} `,
       ` ${padVisible(r.provider, widths.provider)} `,
       ` ${padVisible(r.model, widths.model)} `,
+      ` ${padVisible(r.permission, widths.permission)} `,
       ` ${padVisible(r.status, widths.status)} `,
       ` ${padVisible(r.time, widths.time, 'right')} `,
       ` ${padVisible(r.turns, widths.turns, 'right')} `,
@@ -453,7 +480,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     '',
     '{bold}Récapitulatif{/}',
     '',
-    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', status: 'Statut', time: 'Temps', turns: 'Tours', cost: 'Coût' }),
+    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', permission: 'Perm', status: 'Statut', time: 'Temps', turns: 'Tours', cost: 'Coût' }),
     hr,
     ...rows.map(row),
     hr,
@@ -558,6 +585,7 @@ export async function runPipeline(filePath, opts = {}) {
   const dryRun  = !!opts.dryRun;
   const verbose = !!opts.verbose;
   const shell   = opts.shell || null;
+  const quiet   = !!opts.quiet;
   const beforeSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
 
   // Versioned workspace for this run — intermediate artifacts land here.
@@ -568,11 +596,11 @@ export async function runPipeline(filePath, opts = {}) {
   if (runDir) await fs.mkdir(runDir, { recursive: true });
 
   const runInfo = runDir ? `run: ${path.relative(cwd, runDir)}` : '';
-  if (!shell) {
+  if (!shell && !quiet) {
     console.log(style.title(`\n▸ ${pipeline.name}`) + style.muted(`  (${pipeline.steps.length} steps)`));
     if (runInfo) console.log(style.muted(`  ${runInfo}`));
     if (dryRun) console.log(style.warn('  [dry-run] no CLI calls will be made'));
-  } else {
+  } else if (shell) {
     shell.log(`{bold}▸ ${pipeline.name}{/}  {${C.dimV}-fg}(${pipeline.steps.length} steps){/}`);
     if (runInfo) shell.log(`  {${C.dimV}-fg}${runInfo}{/}`);
     if (dryRun) shell.log(`{yellow-fg}  [dry-run] no CLI calls will be made{/}`);
@@ -586,10 +614,12 @@ export async function runPipeline(filePath, opts = {}) {
   const inputValues = await collectInputValues(pipeline, dryRun, promptFn);
 
   if (shell) shell.enterPipelineMode();
-  const timeline = createTimeline(
-    ['preflight checks', ...pipeline.steps.map((s) => s.agent)],
-    shell ? shell.pipelineWidgets : null
-  );
+  const timeline = quiet
+    ? createSilentTimeline()
+    : createTimeline(
+        ['preflight checks', ...pipeline.steps.map((s) => s.agent)],
+        shell ? shell.pipelineWidgets : null
+      );
 
   const registry = {};
   const fileWrites = [];
@@ -629,6 +659,7 @@ export async function runPipeline(filePath, opts = {}) {
       agent: 'preflight checks',
       provider: 'system',
       model: '—',
+      permissionMode: '—',
       status: 'done',
       seconds: preflightSeconds,
       turns: 0,
@@ -638,8 +669,6 @@ export async function runPipeline(filePath, opts = {}) {
     for (let i = 0; i < pipeline.steps.length; i++) {
       const step = pipeline.steps[i];
       const timelineIndex = i + 1;
-      timeline.setRunning(timelineIndex);
-
       if (!step.agent_file) {
         failStep(timeline, timelineIndex, 'no agent_file', `Step "${step.agent}" is missing agent_file.`);
       }
@@ -665,6 +694,7 @@ export async function runPipeline(filePath, opts = {}) {
           agent: step.agent,
           provider: step.provider || 'claude',
           model: step.model || '—',
+          permissionMode: step.permission_mode || agent.permission_mode || '—',
           status: 'skipped',
           seconds: 0,
           turns: 0,
@@ -676,12 +706,14 @@ export async function runPipeline(filePath, opts = {}) {
       if (dryRun) {
         const provider = resolveProvider(step, agent);
         const model = resolveModel(step, agent);
+        const permissionMode = resolvePermissionMode(step, agent);
         timeline.setDone(timelineIndex, `dry-run · ${outputNames.join(', ')}`);
         for (const name of outputNames) registry[`${step.agent}.${name}`] = `(dry-run:${step.agent}.${name})`;
         stats.push({
           agent: step.agent,
           provider,
           model: model || '—',
+          permissionMode: permissionMode || '—',
           status: 'dry-run',
           seconds: 0,
           turns: 0,
@@ -705,6 +737,10 @@ export async function runPipeline(filePath, opts = {}) {
       const provider = resolveProvider(step, agent);
       const model = resolveModel(step, agent);
       const permissionMode = resolvePermissionMode(step, agent);
+      timeline.setRunning(
+        timelineIndex,
+        formatStepRuntimeMeta({ provider, model: model || '', permissionMode })
+      );
       const runner = getRunner(provider);
 
       if (verbose) {
@@ -794,6 +830,7 @@ export async function runPipeline(filePath, opts = {}) {
         agent: step.agent,
         provider,
         model: model || '—',
+        permissionMode: permissionMode || '—',
         status: 'done',
         seconds: elapsedSeconds,
         turns: Number(result.metadata.turns || 0),
@@ -822,7 +859,9 @@ export async function runPipeline(filePath, opts = {}) {
     combinedWrites.push(entry);
   }
 
-  const out = shell
+  const out = quiet
+    ? () => {}
+    : shell
     ? (t) => shell.log(t)
     : (t) => console.log(stripBlessedTags(t));
 

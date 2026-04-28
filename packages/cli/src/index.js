@@ -32,16 +32,18 @@ program
     }
 
     console.log(style.success(`\nFound ${agents.length} agent(s):\n`));
-    for (const a of agents) {
+    agents.forEach((a, index) => {
       console.log(style.id(`  ${a.id}`) + style.muted(` — ${a.description || '(no description)'}`));
       console.log(style.muted(`    file:    ${path.relative(absPath, a.file)}`));
       console.log(style.info(`    source:`) + style.muted(`  ${a.source || 'repo'}`));
       if (a.provider) console.log(style.warn(`    provider:`) + style.muted(` ${a.provider}`));
+      if (a.permission_mode) console.log(style.warn(`    permission:`) + style.muted(` ${a.permission_mode}`));
       console.log(style.success(`    in:`) + style.muted(`      ${a.inputs.join(', ') || '(none)'}`));
       console.log(style.id(`    out:`) + style.muted(`     ${a.outputs.join(', ') || '(none)'}`));
       if (a.tags?.length) console.log(style.muted(`    tags:    ${a.tags.join(', ')}`));
       console.log();
-    }
+      if (index < agents.length - 1) console.log(style.muted('  ────────────────────────────────────────'));
+    });
 
     const outPath = path.resolve(absPath, opts.output);
     await fs.mkdir(path.dirname(outPath), { recursive: true });

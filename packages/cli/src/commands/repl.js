@@ -362,11 +362,12 @@ async function cmdScan(root, shell) {
   }
   shell.log(`{bold}Agents (${agents.length}){/}`);
   shell.log('');
-  for (const a of agents) {
+  agents.forEach((a, index) => {
     shell.log(`  {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(sans description)'}{/}`);
-    shell.log(`  {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.provider ? `   {${C.peach}-fg}{bold}provider{/}: {${C.dimV}-fg}${a.provider}{/}` : ''}`);
+    shell.log(`  {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.provider ? `   {${C.peach}-fg}{bold}provider{/}: {${C.dimV}-fg}${a.provider}{/}` : ''}${a.permission_mode ? `   {${C.peach}-fg}{bold}permission{/}: {${C.dimV}-fg}${a.permission_mode}{/}` : ''}`);
     shell.log(`  {${C.mint}-fg}{bold}in{/}: {${C.dimV}-fg}${a.inputs.join(', ') || '—'}{/}   {${C.pink}-fg}{bold}out{/}: {${C.dimV}-fg}${a.outputs.join(', ') || '—'}{/}`);
-  }
+    if (index < agents.length - 1) shell.log(`  {${C.dimV}-fg}────────────────────────────────────────{/}`);
+  });
   const outPath = path.resolve(root, '.singleton', 'agents.json');
   await fs.mkdir(path.dirname(outPath), { recursive: true });
   await fs.writeFile(outPath, JSON.stringify({ scannedAt: new Date().toISOString(), root, agents }, null, 2));

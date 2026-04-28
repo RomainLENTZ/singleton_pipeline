@@ -47,7 +47,7 @@ describe('runPipeline preflight', () => {
       ],
     });
 
-    await expect(runPipeline(file, { dryRun: true })).resolves.toBeUndefined();
+    await expect(runPipeline(file, { dryRun: true, quiet: true })).resolves.toBeUndefined();
   });
 
   it('rejects sinks that escape the project root', async () => {
@@ -64,7 +64,7 @@ describe('runPipeline preflight', () => {
       ],
     });
 
-    await expect(runPipeline(file, { dryRun: true })).rejects.toThrow(/outside project root/);
+    await expect(runPipeline(file, { dryRun: true, quiet: true })).rejects.toThrow(/outside project root/);
   });
 
   it('rejects unknown $PIPE references', async () => {
@@ -81,7 +81,7 @@ describe('runPipeline preflight', () => {
       ],
     });
 
-    await expect(runPipeline(file, { dryRun: true })).rejects.toThrow(/PIPE/);
+    await expect(runPipeline(file, { dryRun: true, quiet: true })).rejects.toThrow(/PIPE/);
   });
 
   it('rejects missing input files', async () => {
@@ -98,6 +98,6 @@ describe('runPipeline preflight', () => {
       ],
     });
 
-    await expect(runPipeline(file, { dryRun: true })).rejects.toThrow(/matched no files/);
+    await expect(runPipeline(file, { dryRun: true, quiet: true })).rejects.toThrow(/matched no files/);
   });
 });
