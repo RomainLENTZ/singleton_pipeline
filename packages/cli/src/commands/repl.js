@@ -215,9 +215,6 @@ async function showWelcome(root, shell) {
     `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`,
     `${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
     '',
-    `Currently running on: {${C.peach}-fg}Claude Code{/}`,
-    `{${C.dimV}-fg}type /cli to set your preference{/}`,
-    '',
   ];
   const TAGLINE  = 'one to rule them all';
   const bottomBlockHeight = 2 + SINGLETON_RAW.length;
