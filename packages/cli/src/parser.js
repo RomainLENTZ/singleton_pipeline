@@ -59,6 +59,7 @@ export function parseAgentFileDetailed(content, file) {
     tags: config.tags || [],
     provider: config.provider,
     model: config.model,
+    permission_mode: config.permission_mode,
     estimated_tokens: config.estimated_tokens ? Number(config.estimated_tokens) : undefined,
     file,
     prompt

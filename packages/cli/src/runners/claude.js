@@ -1,21 +1,27 @@
 import { spawn } from 'node:child_process';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
+const ALLOWED_PERMISSION_MODES = new Set(['bypassPermissions']);
 
 export const claudeRunner = {
   id: 'claude',
   command: 'claude',
 
-  async run({ cwd, systemPrompt, userPrompt, model, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  async run({ cwd, systemPrompt, userPrompt, model, permissionMode = '', timeoutMs = DEFAULT_TIMEOUT_MS }) {
     const args = [
       '-p',
       '--output-format',
       'json',
-      '--permission-mode',
-      'bypassPermissions',
       '--system-prompt',
       systemPrompt,
     ];
+
+    if (permissionMode) {
+      if (!ALLOWED_PERMISSION_MODES.has(permissionMode)) {
+        throw new Error(`unsupported Claude permission_mode: ${permissionMode}`);
+      }
+      args.push('--permission-mode', permissionMode);
+    }
 
     if (model) args.push('--model', model);
 

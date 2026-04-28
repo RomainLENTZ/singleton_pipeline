@@ -190,6 +190,10 @@ function resolveModel(step, agent) {
   return step.model || agent.model || null;
 }
 
+function resolvePermissionMode(step, agent) {
+  return step.permission_mode || agent.permission_mode || '';
+}
+
 function failStep(timeline, index, shortMessage, fullMessage = shortMessage) {
   timeline.setError(index, String(shortMessage).slice(0, 60));
   throw new Error(fullMessage);
@@ -266,6 +270,13 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
 
     const model = resolveModel(step, agent);
     if (!model) warnings.push(`${label} has no model configured for provider "${provider}".`);
+    const permissionMode = resolvePermissionMode(step, agent);
+    if (provider === 'claude' && permissionMode && permissionMode !== 'bypassPermissions') {
+      errors.push(`${label} uses unsupported Claude permission_mode "${permissionMode}".`);
+    }
+    if (provider !== 'claude' && permissionMode) {
+      warnings.push(`${label} defines permission_mode "${permissionMode}", but provider "${provider}" ignores it.`);
+    }
 
     for (const [name, spec] of Object.entries(step.inputs || {})) {
       if (typeof spec !== 'string') continue;
@@ -693,6 +704,7 @@ export async function runPipeline(filePath, opts = {}) {
       const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo);
       const provider = resolveProvider(step, agent);
       const model = resolveModel(step, agent);
+      const permissionMode = resolvePermissionMode(step, agent);
       const runner = getRunner(provider);
 
       if (verbose) {
@@ -712,6 +724,7 @@ export async function runPipeline(filePath, opts = {}) {
           systemPrompt,
           userPrompt: userMessage,
           model,
+          permissionMode,
           verbose,
         });
       } catch (err) {
