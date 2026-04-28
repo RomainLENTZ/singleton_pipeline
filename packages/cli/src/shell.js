@@ -20,7 +20,6 @@ export function createShell() {
     '/scan to scan agents',
     '/new to create an agent',
     '/run to execute a pipeline',
-    '/edit to update an agent',
     '/commit-last to commit the last run',
   ];
 
@@ -108,6 +107,13 @@ export function createShell() {
     tags: true
   });
 
+  const footerCenterBox = blessed.box({
+    bottom: 0, left: '30%',
+    width: '40%', height: 1,
+    align: 'center',
+    tags: true
+  });
+
   screen.append(content);
   screen.append(pipelineLog);
   screen.append(pipelineSep);
@@ -118,6 +124,7 @@ export function createShell() {
   screen.append(sep2);
   screen.append(footerLeftBox);
   screen.append(footerRightBox);
+  screen.append(footerCenterBox);
 
   pipelineSep.hide();
   pipelineStatus.hide();
@@ -136,6 +143,9 @@ export function createShell() {
   let historyIndex = -1;
   let draftBuffer = '';
   let hintIndex = 0;
+  let footerLeft = '';
+  let footerRight = '';
+  let footerCenter = '';
   function stripTags(s) {
     return String(s || '').replace(/\{[^}]+\}/g, '');
   }
@@ -220,9 +230,22 @@ export function createShell() {
     screen.render();
   }
 
+  function renderFooter() {
+    footerLeftBox.setContent(footerLeft ? `{${C.dimV}-fg}${String(footerLeft)}{/}` : '');
+    footerRightBox.setContent(footerRight ? `{${C.dimV}-fg}${String(footerRight)}{/}` : '');
+    footerCenterBox.setContent(footerCenter || '');
+  }
+
   function setFooter(left = '', right = '') {
-    footerLeftBox.setContent(`{${C.dimV}-fg}${String(left)}{/}`);
-    footerRightBox.setContent(`{${C.dimV}-fg}${String(right)}{/}`);
+    footerLeft = left;
+    footerRight = right;
+    renderFooter();
+    screen.render();
+  }
+
+  function setFooterCenter(text = '') {
+    footerCenter = text;
+    renderFooter();
     screen.render();
   }
 
@@ -419,6 +442,7 @@ export function createShell() {
     logMuted(text)  { log(`{${C.dimV}-fg}${text}{/}`); },
     logAccent(text) { log(`{${C.violet}-fg}${text}{/}`); },
     setFooter,
+    setFooterCenter,
 
     clear() { content.setContent(''); screen.render(); },
     onCommand(fn)  { onSubmit = fn; },

@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
+import { spawn } from 'node:child_process';
 import { input } from '@inquirer/prompts';
-import { parseAgentFile } from './parser.js';
+import { parseAgentFileDetailed } from './parser.js';
 import { style, line } from './theme.js';
 import { createTimeline } from './timeline.js';
 import { C } from './shell.js';
@@ -45,6 +46,12 @@ function resolvePipeRef(spec, registry) {
     throw new Error(`Unresolved $PIPE reference: ${ref}`);
   }
   return registry[key];
+}
+
+function parsePipeRef(spec) {
+  const ref = String(spec).slice('$PIPE:'.length).trim();
+  const [agentId, outName] = ref.split('.');
+  return { ref, agentId, outName };
 }
 
 async function resolveInput(spec, { registry, cwd, inputValues = {}, inputDefs = [] }) {
@@ -173,6 +180,126 @@ function failStep(timeline, index, shortMessage, fullMessage = shortMessage) {
   throw new Error(fullMessage);
 }
 
+function commandExists(command) {
+  return new Promise((resolve) => {
+    const child = spawn('which', [command], { stdio: 'ignore' });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+  });
+}
+
+async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun }) {
+  const errors = [];
+  const warnings = [];
+  const stepAgents = new Map();
+  const availablePipeOutputs = new Set();
+
+  for (const def of inputDefs) {
+    const value = inputValues[def.id];
+    if (!dryRun && !String(value || '').trim()) {
+      errors.push(`Missing input "${def.id}".`);
+      continue;
+    }
+    if (!dryRun && def.subtype === 'file' && String(value || '').trim()) {
+      const files = await resolveFileGlob(`$FILE:${value}`, cwd);
+      if (files.length === 0) {
+        errors.push(`Input file "${def.id}" does not resolve to any file: ${value}`);
+      }
+    }
+  }
+
+  const parsedAgents = [];
+  for (let i = 0; i < pipeline.steps.length; i += 1) {
+    const step = pipeline.steps[i];
+    const label = `Step ${i + 1} "${step.agent}"`;
+
+    if (!step.agent_file) {
+      errors.push(`${label} is missing agent_file.`);
+      continue;
+    }
+
+    const agentFilePath = path.isAbsolute(step.agent_file)
+      ? step.agent_file
+      : path.resolve(cwd, step.agent_file);
+
+    let raw;
+    try {
+      raw = await fs.readFile(agentFilePath, 'utf8');
+    } catch {
+      errors.push(`${label} agent file not found: ${step.agent_file}`);
+      continue;
+    }
+
+    const { agent, error } = parseAgentFileDetailed(raw, agentFilePath);
+    if (!agent) {
+      errors.push(`${label} agent file is invalid: ${step.agent_file}${error ? ` (${error})` : ''}`);
+      continue;
+    }
+
+    parsedAgents.push({ step, agent });
+    stepAgents.set(step.agent, agent);
+
+    let provider;
+    try {
+      provider = resolveProvider(step, agent);
+      getRunner(provider);
+    } catch (err) {
+      errors.push(`${label} uses unknown provider "${step.provider || agent.provider || ''}".`);
+      continue;
+    }
+
+    const model = resolveModel(step, agent);
+    if (!model) warnings.push(`${label} has no model configured for provider "${provider}".`);
+
+    for (const [name, spec] of Object.entries(step.inputs || {})) {
+      if (typeof spec !== 'string') continue;
+
+      if (spec.startsWith('$INPUT:')) {
+        const id = spec.slice('$INPUT:'.length).trim();
+        if (!inputDefs.some((def) => def.id === id)) {
+          errors.push(`${label} input "${name}" references unknown $INPUT:${id}.`);
+        }
+      } else if (spec.startsWith('$PIPE:')) {
+        const { ref, agentId, outName } = parsePipeRef(spec);
+        if (!stepAgents.has(agentId)) {
+          errors.push(`${label} input "${name}" references future or unknown $PIPE:${ref}.`);
+        } else if (outName && !availablePipeOutputs.has(`${agentId}.${outName}`)) {
+          errors.push(`${label} input "${name}" references missing $PIPE output: ${ref}.`);
+        }
+      } else if (spec.startsWith('$FILE:')) {
+        const files = await resolveFileGlob(spec, cwd);
+        if (files.length === 0) {
+          errors.push(`${label} input "${name}" matched no files for ${spec}.`);
+        }
+      }
+    }
+
+    for (const outputName of Object.keys(step.outputs || {})) {
+      availablePipeOutputs.add(`${step.agent}.${outputName}`);
+    }
+  }
+
+  const usedProviders = [...new Set(parsedAgents.map(({ step, agent }) => resolveProvider(step, agent)))];
+  for (const provider of usedProviders) {
+    try {
+      const runner = getRunner(provider);
+      if (runner.command) {
+        const exists = await commandExists(runner.command);
+        if (!exists) errors.push(`Provider "${provider}" requires missing CLI binary: ${runner.command}`);
+      }
+    } catch {
+      // already captured above
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    providerCount: usedProviders.length,
+  };
+}
+
 function printVerboseBlock(label, content, colorFn = (s) => s) {
   const WIDTH = 72;
   const bar = style.muted('─'.repeat(WIDTH));
@@ -217,6 +344,8 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   const rows = stats.map((s, i) => ({
     step: String(i + 1),
     agent: s.agent,
+    provider: s.provider || '—',
+    model: s.model || '—',
     status: s.status,
     time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
     turns: formatTurns(s.turns),
@@ -226,6 +355,8 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   const totalRow = {
     step: '',
     agent: 'TOTAL',
+    provider: '—',
+    model: '—',
     status: dryRun ? 'dry-run' : 'done',
     time: formatSeconds(totalSeconds),
     turns: formatTurns(totalTurns),
@@ -236,6 +367,8 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   const widths = {
     step: Math.max(1, ...allRows.map((r) => visibleLength(r.step))),
     agent: Math.max(5, ...allRows.map((r) => visibleLength(r.agent))),
+    provider: Math.max(8, ...allRows.map((r) => visibleLength(r.provider))),
+    model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
     status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
     time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
     turns: Math.max(5, ...allRows.map((r) => visibleLength(r.turns))),
@@ -245,6 +378,8 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   const hr = [
     '─'.repeat(widths.step + 2),
     '─'.repeat(widths.agent + 2),
+    '─'.repeat(widths.provider + 2),
+    '─'.repeat(widths.model + 2),
     '─'.repeat(widths.status + 2),
     '─'.repeat(widths.time + 2),
     '─'.repeat(widths.turns + 2),
@@ -255,6 +390,8 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     return [
       ` ${padVisible(r.step, widths.step, 'right')} `,
       ` ${padVisible(r.agent, widths.agent)} `,
+      ` ${padVisible(r.provider, widths.provider)} `,
+      ` ${padVisible(r.model, widths.model)} `,
       ` ${padVisible(r.status, widths.status)} `,
       ` ${padVisible(r.time, widths.time, 'right')} `,
       ` ${padVisible(r.turns, widths.turns, 'right')} `,
@@ -266,7 +403,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     '',
     '{bold}Récapitulatif{/}',
     '',
-    row({ step: '#', agent: 'Agent', status: 'Statut', time: 'Temps', turns: 'Tours', cost: 'Coût' }),
+    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', status: 'Statut', time: 'Temps', turns: 'Tours', cost: 'Coût' }),
     hr,
     ...rows.map(row),
     hr,
@@ -400,7 +537,7 @@ export async function runPipeline(filePath, opts = {}) {
 
   if (shell) shell.enterPipelineMode();
   const timeline = createTimeline(
-    pipeline.steps.map((s) => s.agent),
+    ['preflight checks', ...pipeline.steps.map((s) => s.agent)],
     shell ? shell.pipelineWidgets : null
   );
 
@@ -410,28 +547,69 @@ export async function runPipeline(filePath, opts = {}) {
   const stats = [];
 
   try {
+    timeline.setRunning(0);
+    const preflightStarted = Date.now();
+    const preflight = await runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun });
+    const preflightSeconds = (Date.now() - preflightStarted) / 1000;
+
+    if (preflight.warnings.length) {
+      timeline.log(`── preflight warnings ──`);
+      for (const warning of preflight.warnings) timeline.logMuted(warning);
+    }
+
+    if (!preflight.ok) {
+      timeline.log(`── preflight errors ──`);
+      for (const error of preflight.errors) timeline.logMuted(error);
+      failStep(
+        timeline,
+        0,
+        `${preflight.errors.length} error${preflight.errors.length > 1 ? 's' : ''}`,
+        `Preflight checks failed:\n- ${preflight.errors.join('\n- ')}`
+      );
+    }
+
+    timeline.setDone(0, `${preflightSeconds.toFixed(1)}s · ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
+    timeline.log(`✓ preflight checks — ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
+    stats.push({
+      agent: 'preflight checks',
+      provider: 'system',
+      model: '—',
+      status: 'done',
+      seconds: preflightSeconds,
+      turns: 0,
+      cost: 0,
+    });
+
     for (let i = 0; i < pipeline.steps.length; i++) {
       const step = pipeline.steps[i];
-      timeline.setRunning(i);
+      const timelineIndex = i + 1;
+      timeline.setRunning(timelineIndex);
 
       if (!step.agent_file) {
-        failStep(timeline, i, 'no agent_file', `Step "${step.agent}" is missing agent_file.`);
+        failStep(timeline, timelineIndex, 'no agent_file', `Step "${step.agent}" is missing agent_file.`);
       }
 
       const agentFilePath = path.isAbsolute(step.agent_file)
         ? step.agent_file
         : path.resolve(cwd, step.agent_file);
       const raw = await fs.readFile(agentFilePath, 'utf8');
-      const agent = parseAgentFile(raw, agentFilePath);
+      const { agent, error } = parseAgentFileDetailed(raw, agentFilePath);
       if (!agent) {
-        failStep(timeline, i, `failed to parse ${step.agent_file}`, `Failed to parse agent file: ${step.agent_file}`);
+        failStep(
+          timeline,
+          timelineIndex,
+          `failed to parse ${step.agent_file}`,
+          `Failed to parse agent file: ${step.agent_file}${error ? ` (${error})` : ''}`
+        );
       }
 
       const outputNames = Object.keys(step.outputs || {});
       if (outputNames.length === 0) {
-        timeline.setDone(i, 'skipped (no outputs)');
+        timeline.setDone(timelineIndex, 'skipped (no outputs)');
         stats.push({
           agent: step.agent,
+          provider: step.provider || 'claude',
+          model: step.model || '—',
           status: 'skipped',
           seconds: 0,
           turns: 0,
@@ -441,10 +619,14 @@ export async function runPipeline(filePath, opts = {}) {
       }
 
       if (dryRun) {
-        timeline.setDone(i, `dry-run · ${outputNames.join(', ')}`);
+        const provider = resolveProvider(step, agent);
+        const model = resolveModel(step, agent);
+        timeline.setDone(timelineIndex, `dry-run · ${outputNames.join(', ')}`);
         for (const name of outputNames) registry[`${step.agent}.${name}`] = `(dry-run:${step.agent}.${name})`;
         stats.push({
           agent: step.agent,
+          provider,
+          model: model || '—',
           status: 'dry-run',
           seconds: 0,
           turns: 0,
@@ -481,7 +663,7 @@ export async function runPipeline(filePath, opts = {}) {
       try {
         result = await runner.run({ cwd, systemPrompt, userPrompt: userMessage, model, verbose });
       } catch (err) {
-        failStep(timeline, i, err.message, `Step "${step.agent}" failed: ${err.message}`);
+        failStep(timeline, timelineIndex, err.message, `Step "${step.agent}" failed: ${err.message}`);
       }
       const elapsedSeconds = (Date.now() - started) / 1000;
       const elapsed = elapsedSeconds.toFixed(1);
@@ -512,7 +694,7 @@ export async function runPipeline(filePath, opts = {}) {
           const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
           let manifest;
           try { manifest = JSON.parse(rawJson); } catch (e) {
-            failStep(timeline, i, '$FILES: JSON invalide', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
+            failStep(timeline, timelineIndex, '$FILES: JSON invalide', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
           }
           for (const entry of (Array.isArray(manifest) ? manifest : [])) {
             const absOut = path.join(absBase, entry.path);
@@ -539,10 +721,12 @@ export async function runPipeline(filePath, opts = {}) {
 
       const costInfo = result.metadata.costUsd ? ` · $${result.metadata.costUsd.toFixed(4)}` : '';
       const turnInfo = result.metadata.turns ? ` · ${result.metadata.turns}t` : '';
-      timeline.setDone(i, `${elapsed}s${turnInfo}${costInfo}`);
+      timeline.setDone(timelineIndex, `${elapsed}s${turnInfo}${costInfo}`);
       timeline.log(`✓ ${step.agent} — ${elapsed}s${turnInfo}${costInfo}`);
       stats.push({
         agent: step.agent,
+        provider,
+        model: model || '—',
         status: 'done',
         seconds: elapsedSeconds,
         turns: Number(result.metadata.turns || 0),

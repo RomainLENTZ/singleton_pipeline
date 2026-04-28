@@ -2,21 +2,44 @@ import fg from 'fast-glob';
 import fs from 'node:fs/promises';
 import { parseAgentFile } from './parser.js';
 
-const IGNORE = ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/.singleton/**'];
+const SOURCES = [
+  { kind: 'singleton', pattern: '.singleton/agents/*.md', priority: 3 },
+  { kind: 'claude', pattern: '.claude/agents/*.md', priority: 2 },
+];
+
+function normalizeAgent(agent, source) {
+    return {
+    ...agent,
+    source,
+    provider: agent.provider || (source === 'claude' ? 'claude' : undefined),
+  };
+}
 
 export async function scanAgents(root) {
-  // Priorité à .claude/agents/ (répertoire natif Claude Code), puis tout le repo
-  const claudeAgentsDir = `${root}/.claude/agents`;
-  const hasClaudeAgents = await fg(['.claude/agents/*.md'], { cwd: root, absolute: true }).then(f => f.length > 0).catch(() => false);
-  const patterns = hasClaudeAgents ? ['.claude/agents/*.md'] : ['**/*.md'];
-  const files = await fg(patterns, { cwd: root, absolute: true, ignore: IGNORE });
-  const agents = [];
+  const selected = new Map();
 
-  for (const file of files) {
-    const content = await fs.readFile(file, 'utf8');
-    const parsed = parseAgentFile(content, file);
-    if (parsed) agents.push(parsed);
+  for (const source of SOURCES) {
+    const files = await fg([source.pattern], {
+      cwd: root,
+      absolute: true,
+      ignore: source.ignore || [],
+    });
+
+    for (const file of files) {
+      const content = await fs.readFile(file, 'utf8');
+      const parsed = parseAgentFile(content, file);
+      if (!parsed) continue;
+
+      const agent = normalizeAgent(parsed, source.kind);
+      const existing = selected.get(agent.id);
+
+      if (!existing || source.priority > existing.priority) {
+        selected.set(agent.id, { ...agent, priority: source.priority });
+      }
+    }
   }
 
-  return agents;
+  return [...selected.values()]
+    .map(({ priority, ...agent }) => agent)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }

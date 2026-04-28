@@ -11,13 +11,71 @@ const CLAUDE_MODELS = [
   { name: 'claude-haiku-4-5', value: 'claude-haiku-4-5' },
   { name: '(aucun)', value: '' }
 ];
+const CODEX_MODELS = [
+  { name: 'gpt-5-codex', value: 'gpt-5-codex' },
+  { name: 'gpt-5.2-codex', value: 'gpt-5.2-codex' },
+  { name: 'gpt-5.1-codex', value: 'gpt-5.1-codex' },
+  { name: '(aucun)', value: '' }
+];
 const PROVIDERS = [
   { name: 'claude', value: 'claude' },
   { name: 'codex', value: 'codex' },
 ];
+const DEFAULT_AGENTS_DIR = '.singleton/agents';
+const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6';
+const CODEX_DEFAULT_MODEL = 'gpt-5-codex';
 
 function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort();
+}
+
+function defaultTitleFromId(id) {
+  return id
+    .split('-')
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+    .join(' ');
+}
+
+function parseCsvList(value) {
+  return uniqueSorted(
+    String(value || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
+async function askShellValue(shell, message, { defaultValue = '', validate = null, normalize = (v) => v } = {}) {
+  while (true) {
+    const answer = await shell.prompt(defaultValue ? `${message} (default: ${defaultValue})` : message);
+    const value = answer.trim() || defaultValue;
+    const verdict = validate ? validate(value) : true;
+    if (verdict === true) return normalize(value);
+    shell.log(`{red-fg}✕{/} ${verdict}`);
+  }
+}
+
+function modelChoicesForProvider(provider) {
+  return provider === 'codex' ? CODEX_MODELS : CLAUDE_MODELS;
+}
+
+async function askShellChoice(shell, message, choices, defaultValue) {
+  shell.log('');
+  shell.log(`{bold}${message}{/}`);
+  choices.forEach((choice, index) => {
+    const marker = choice.value === defaultValue ? 'default' : 'option';
+    shell.log(`  {#797C81-fg}${index + 1}.{/} ${choice.name}${choice.value === defaultValue ? ` {#797C81-fg}(${marker}){/}` : ''}`);
+  });
+
+  while (true) {
+    const answer = (await shell.prompt(`${message} (number or exact value)`)).trim();
+    const raw = answer || defaultValue;
+    const byIndex = /^\d+$/.test(raw) ? choices[Number(raw) - 1] : null;
+    const byValue = choices.find((choice) => choice.value === raw);
+    const selected = byIndex || byValue;
+    if (selected) return selected.value;
+    shell.log(`{red-fg}✕{/} Choisis une valeur dans la liste.`);
+  }
 }
 
 const DONE = '__DONE__';
@@ -131,9 +189,10 @@ export async function newAgentCommand(opts) {
         choices: CLAUDE_MODELS,
         default: 'claude-sonnet-4-6'
       })
-    : await input({
+    : await select({
         message: 'modèle',
-        default: '',
+        choices: CODEX_MODELS,
+        default: CODEX_DEFAULT_MODEL
       });
 
   const estimatedRaw = await input({
@@ -142,21 +201,13 @@ export async function newAgentCommand(opts) {
     validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'entier attendu')
   });
 
-  const defaultDir = existing[0]
-    ? path.relative(root, path.dirname(existing[0].file)) || 'agents'
-    : 'agents';
-  const dir = await input({
-    message: 'dossier',
-    default: defaultDir
-  });
-
   const filename = await input({
     message: 'fichier',
     default: `${id}.md`,
     validate: (v) => (v.endsWith('.md') ? true : 'doit finir par .md')
   });
 
-  const targetDir = path.resolve(root, dir);
+  const targetDir = path.resolve(root, DEFAULT_AGENTS_DIR);
   const targetFile = path.join(targetDir, filename);
 
   try {
@@ -175,7 +226,110 @@ export async function newAgentCommand(opts) {
   await fs.mkdir(targetDir, { recursive: true });
   await fs.writeFile(targetFile, content);
 
+  console.log(style.muted(`Dossier canonique : ${DEFAULT_AGENTS_DIR}`));
   console.log(line.success(path.relative(root, targetFile)));
+}
+
+export async function newAgentShellCommand({ root, shell }) {
+  const absRoot = path.resolve(root || process.cwd());
+  const existing = await scanAgents(absRoot);
+
+  const existingIds = new Set(existing.map((a) => a.id));
+  const existingOutputs = uniqueSorted(existing.flatMap((a) => a.outputs));
+  const existingInputs = uniqueSorted(existing.flatMap((a) => a.inputs));
+  const existingTags = uniqueSorted(existing.flatMap((a) => a.tags));
+  const inputSuggestions = uniqueSorted([...existingOutputs, ...existingInputs]);
+
+  shell.log('{bold}New agent{/}');
+  shell.log(`{#797C81-fg}Canonical dir: ${DEFAULT_AGENTS_DIR}{/}`);
+  shell.log('');
+
+  const id = await askShellValue(shell, 'id', {
+    validate: (v) => {
+      if (!SLUG_RE.test(v)) return 'slug invalide (a-z, 0-9, tirets)';
+      if (existingIds.has(v)) return `id "${v}" déjà utilisé`;
+      return true;
+    },
+  });
+
+  const title = await askShellValue(shell, 'titre', {
+    defaultValue: defaultTitleFromId(id),
+  });
+
+  const description = await askShellValue(shell, 'description', {
+    validate: (v) => (v.trim() ? true : 'requis'),
+  });
+
+  if (inputSuggestions.length) {
+    shell.log(`{#797C81-fg}Input suggestions: ${inputSuggestions.join(', ')}{/}`);
+  }
+  const inputs = parseCsvList(await askShellValue(shell, 'inputs (comma separated)'));
+
+  if (existingOutputs.length) {
+    shell.log(`{#797C81-fg}Output suggestions: ${existingOutputs.join(', ')}{/}`);
+  }
+  const outputs = parseCsvList(await askShellValue(shell, 'outputs (comma separated)', {
+    validate: (v) => (parseCsvList(v).length > 0 ? true : 'au moins une output requise'),
+  }));
+
+  if (existingTags.length) {
+    shell.log(`{#797C81-fg}Tag suggestions: ${existingTags.join(', ')}{/}`);
+  }
+  const tags = parseCsvList(await askShellValue(shell, 'tags (comma separated, optional)'));
+
+  const provider = await askShellChoice(shell, 'provider', PROVIDERS, 'claude');
+  const model = await askShellChoice(
+    shell,
+    'modèle',
+    modelChoicesForProvider(provider),
+    provider === 'claude' ? CLAUDE_DEFAULT_MODEL : CODEX_DEFAULT_MODEL
+  );
+
+  const estimatedTokens = await askShellValue(shell, 'estimated_tokens (optional)', {
+    validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'entier attendu'),
+  });
+
+  const filename = await askShellValue(shell, 'fichier', {
+    defaultValue: `${id}.md`,
+    validate: (v) => (v.endsWith('.md') ? true : 'doit finir par .md'),
+  });
+
+  const targetDir = path.resolve(absRoot, DEFAULT_AGENTS_DIR);
+  const targetFile = path.join(targetDir, filename);
+
+  try {
+    await fs.access(targetFile);
+    const overwrite = await askShellValue(shell, `${path.relative(absRoot, targetFile)} existe. Écraser ? [y/N]`, {
+      defaultValue: 'n',
+      normalize: (v) => v.toLowerCase(),
+      validate: (v) => (['y', 'yes', 'n', 'no'].includes(v.toLowerCase()) ? true : 'réponds y ou n'),
+    });
+    if (!['y', 'yes'].includes(overwrite)) {
+      shell.log(`{#797C81-fg}Création annulée.{/}`);
+      return null;
+    }
+  } catch {
+    // file doesn't exist
+  }
+
+  const content = renderAgentFile({
+    title,
+    id,
+    description,
+    inputs,
+    outputs,
+    tags,
+    provider,
+    model,
+    estimatedTokens,
+  });
+
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.writeFile(targetFile, content);
+
+  shell.log('');
+  shell.log(`{green-fg}✓{/} ${path.relative(absRoot, targetFile)}`);
+  return targetFile;
 }
 
 function renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, estimatedTokens }) {

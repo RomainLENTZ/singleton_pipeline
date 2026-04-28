@@ -6,7 +6,6 @@ import { style, line } from './theme.js';
 import { scanAgents } from './scanner.js';
 import { runPipeline } from './executor.js';
 import { newAgentCommand } from './commands/new.js';
-import { editAgentCommand } from './commands/edit.js';
 import { replCommand } from './commands/repl.js';
 
 const program = new Command();
@@ -36,8 +35,10 @@ program
     for (const a of agents) {
       console.log(style.id(`  ${a.id}`) + style.muted(` — ${a.description || '(no description)'}`));
       console.log(style.muted(`    file:    ${path.relative(absPath, a.file)}`));
-      console.log(style.muted(`    inputs:  ${a.inputs.join(', ') || '(none)'}`));
-      console.log(style.muted(`    outputs: ${a.outputs.join(', ') || '(none)'}`));
+      console.log(style.info(`    source:`) + style.muted(`  ${a.source || 'repo'}`));
+      if (a.provider) console.log(style.warn(`    provider:`) + style.muted(` ${a.provider}`));
+      console.log(style.success(`    in:`) + style.muted(`      ${a.inputs.join(', ') || '(none)'}`));
+      console.log(style.id(`    out:`) + style.muted(`     ${a.outputs.join(', ') || '(none)'}`));
       if (a.tags?.length) console.log(style.muted(`    tags:    ${a.tags.join(', ')}`));
       console.log();
     }
@@ -64,15 +65,6 @@ program
   .option('-r, --root <path>', 'Racine du repo à scanner', process.cwd())
   .action(async (opts) => {
     await newAgentCommand(opts);
-  });
-
-program
-  .command('edit')
-  .description('Éditer un agent existant (ouvre $EDITOR)')
-  .argument('[id]', 'ID de l\'agent — sinon prompt de sélection')
-  .option('-r, --root <path>', 'Racine du repo à scanner', process.cwd())
-  .action(async (id, opts) => {
-    await editAgentCommand(id, opts);
   });
 
 program

@@ -4,8 +4,7 @@ import { spawn } from 'node:child_process';
 import { createShell, C } from '../shell.js';
 import { scanAgents } from '../scanner.js';
 import { runPipeline } from '../executor.js';
-import { newAgentCommand } from './new.js';
-import { editAgentCommand } from './edit.js';
+import { newAgentShellCommand } from './new.js';
 
 const PIPELINES_DIRS = ['.singleton/pipelines'];
 
@@ -18,8 +17,8 @@ const HELP = [
   `  {${C.violet}-fg}/run <name> --verbose{/}     afficher prompts et outputs`,
   `  {${C.blue}-fg}/scan{/}                     scanner les agents .md`,
   `  {${C.blue}-fg}/new{/}                      créer un nouvel agent`,
-  `  {${C.blue}-fg}/edit [id]{/}                éditer un agent existant`,
   `  {${C.blue}-fg}/serve{/}                    démarrer le serveur web`,
+  `  {${C.blue}-fg}/stop{/}                     arrêter le serveur web`,
   `  {${C.blue}-fg}/commit-last{/}              commit les livrables du dernier run`,
   `  {${C.pink}-fg}/ls{/}                       lister les pipelines`,
   `  {${C.pink}-fg}/help{/}                     cette aide`,
@@ -31,8 +30,8 @@ const COMMANDS = [
   { label: '/run', value: '/run ', description: 'exécuter une pipeline' },
   { label: '/scan', value: '/scan ', description: 'scanner les agents .md' },
   { label: '/new', value: '/new ', description: 'créer un nouvel agent' },
-  { label: '/edit', value: '/edit ', description: 'éditer un agent' },
   { label: '/serve', value: '/serve ', description: 'démarrer le serveur web' },
+  { label: '/stop', value: '/stop', description: 'arrêter le serveur web' },
   { label: '/commit-last', value: '/commit-last', description: 'commit le dernier run' },
   { label: '/ls', value: '/ls', description: 'lister les pipelines' },
   { label: '/help', value: '/help', description: 'afficher l’aide' },
@@ -153,17 +152,6 @@ async function completeRepl(buffer, root) {
       : [...pipelineItems, ...flagItems];
   }
 
-  if (cmd === '/edit') {
-    const agents = await scanAgents(root);
-    return agents
-      .map((agent) => ({
-        label: agent.id,
-        value: replaceCurrentToken(buffer, agent.id),
-        description: agent.description || 'agent',
-      }))
-      .filter((agent) => !current || matchesPrefix(agent.label, current));
-  }
-
   return [];
 }
 
@@ -276,9 +264,24 @@ async function refreshFooter(root, shell) {
   );
 }
 
+function createServeState(shell) {
+  return {
+    server: null,
+    url: '',
+    suppressCloseLog: false,
+    clear() {
+      this.server = null;
+      this.url = '';
+      this.suppressCloseLog = false;
+      shell.setFooterCenter('');
+    },
+  };
+}
+
 export async function replCommand(opts) {
   const root  = path.resolve(opts.root || process.cwd());
   const shell = createShell();
+  const serveState = createServeState(shell);
 
   let stopShimmer = await showWelcome(root, shell);
   await refreshFooter(root, shell);
@@ -294,13 +297,17 @@ export async function replCommand(opts) {
         case '/run':   await cmdRun(args, root, shell); break;
         case '/ls':    await cmdLs(root, shell); break;
         case '/scan':  await cmdScan(root, shell); await refreshFooter(root, shell); break;
-        case '/new':   await cmdNew(root, shell); break;
-        case '/edit':  await cmdEdit(args[0], root, shell); break;
-        case '/serve': await cmdServe(root, shell); break;
+        case '/new':   await cmdNew(root, shell); await refreshFooter(root, shell); break;
+        case '/serve': await cmdServe(root, shell, serveState); break;
+        case '/stop':  await cmdStop(shell, serveState); break;
         case '/commit-last': await cmdCommitLast(root, shell); break;
         case '/help':  shell.log(HELP); break;
         case '/quit':
         case '/exit':
+          if (serveState.server) {
+            await closeServer(serveState.server);
+            serveState.clear();
+          }
           shell.log('{#676498-fg}À bientôt.{/}');
           setTimeout(() => { shell.destroy(); process.exit(0); }, 300);
           return;
@@ -364,7 +371,8 @@ async function cmdScan(root, shell) {
   shell.log('');
   for (const a of agents) {
     shell.log(`  {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(sans description)'}{/}`);
-    shell.log(`  {${C.dimV}-fg}in: ${a.inputs.join(', ') || '—'}   out: ${a.outputs.join(', ') || '—'}{/}`);
+    shell.log(`  {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.provider ? `   {${C.peach}-fg}{bold}provider{/}: {${C.dimV}-fg}${a.provider}{/}` : ''}`);
+    shell.log(`  {${C.mint}-fg}{bold}in{/}: {${C.dimV}-fg}${a.inputs.join(', ') || '—'}{/}   {${C.pink}-fg}{bold}out{/}: {${C.dimV}-fg}${a.outputs.join(', ') || '—'}{/}`);
   }
   const outPath = path.resolve(root, '.singleton', 'agents.json');
   await fs.mkdir(path.dirname(outPath), { recursive: true });
@@ -374,23 +382,70 @@ async function cmdScan(root, shell) {
 }
 
 async function cmdNew(root, shell) {
-  // newAgentCommand uses inquirer — destroy shell, run, then restart
-  shell.destroy();
-  await newAgentCommand({ root });
-  process.exit(0);
+  await newAgentShellCommand({ root, shell });
 }
 
-async function cmdEdit(id, root, shell) {
-  shell.destroy();
-  await editAgentCommand(id, { root });
-  process.exit(0);
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
-async function cmdServe(root, shell) {
+async function cmdServe(root, shell, serveState) {
+  if (serveState.server) {
+    shell.log(`{${C.peach}-fg}!{/} Le serveur tourne déjà sur {${C.blue}-fg}${serveState.url}{/}.`);
+    return;
+  }
   const { startServer } = await import('../../../server/src/index.js');
-  shell.log('{#676498-fg}Démarrage du serveur… (Ctrl+C pour arrêter){/}');
+  const serverUrl = 'http://localhost:4317';
+  shell.log('{#676498-fg}Démarrage du serveur… (/stop pour arrêter){/}');
   shell.enableInput();
-  await startServer({ port: 4317, root });
+  const server = await startServer({
+    port: 4317,
+    root,
+    logger: (message) => {
+      const urlMatch = String(message).match(/https?:\/\/\S+/);
+      if (urlMatch) {
+        const url = urlMatch[0];
+        const prefix = message.slice(0, urlMatch.index);
+        const suffix = message.slice(urlMatch.index + url.length);
+        shell.log(`{#FFFFFF-fg}{bold}${prefix}{/}{${C.blue}-fg}${url}{/}{${C.dimV}-fg}${suffix}{/}`);
+        return;
+      }
+      shell.log(`{${C.dimV}-fg}${message}{/}`);
+    },
+  });
+  serveState.server = server;
+  serveState.url = serverUrl;
+  server.on('close', () => {
+    const shouldLog = !serveState.suppressCloseLog;
+    serveState.clear();
+    if (shouldLog) shell.log(`{${C.dimV}-fg}Serve stopped.{/}`);
+  });
+  shell.setFooterCenter(
+    `{${C.dimV}-fg}serve running{/} {${C.blue}-fg}${serverUrl}{/}`
+  );
+}
+
+async function cmdStop(shell, serveState) {
+  if (!serveState.server) {
+    shell.log(`{${C.peach}-fg}!{/} Aucun serveur en cours d'exécution.`);
+    return;
+  }
+  const url = serveState.url;
+  const server = serveState.server;
+  serveState.suppressCloseLog = true;
+  serveState.server = null;
+  serveState.url = '';
+  shell.setFooterCenter('');
+  await closeServer(server);
+  shell.log(`{${C.mint}-fg}✓{/} Serve stopped {${C.dimV}-fg}${url}{/}`);
 }
 
 async function cmdCommitLast(root, shell) {

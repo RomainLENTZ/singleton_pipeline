@@ -5,13 +5,15 @@ const KV_LINE = /^\s*-\s+\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$/;
 const REQUIRED = ['id', 'description', 'inputs', 'outputs'];
 const LIST_KEYS = new Set(['inputs', 'outputs', 'tags']);
 
-export function parseAgentFile(content, file) {
+export function parseAgentFileDetailed(content, file) {
   // Strip YAML frontmatter if present
   const stripped = content.startsWith('---')
     ? content.replace(/^---[\s\S]*?---\n?/, '')
     : content;
   const configMatch = stripped.match(CONFIG_HEADER);
-  if (!configMatch) return null;
+  if (!configMatch) {
+    return { agent: null, error: 'missing "## Config" section' };
+  }
 
   const afterConfig = stripped.slice(configMatch.index + configMatch[0].length);
 
@@ -35,7 +37,7 @@ export function parseAgentFile(content, file) {
 
   for (const k of REQUIRED) {
     if (config[k] === undefined || (LIST_KEYS.has(k) && config[k].length === 0 && k !== 'tags')) {
-      return null;
+      return { agent: null, error: `missing required field: ${k}` };
     }
   }
 
@@ -49,7 +51,7 @@ export function parseAgentFile(content, file) {
     if (hrAll) prompt = stripped.slice(hrAll.index + hrAll[0].length).trim();
   }
 
-  return {
+  const agent = {
     id: config.id,
     description: config.description || '',
     inputs: config.inputs || [],
@@ -61,4 +63,10 @@ export function parseAgentFile(content, file) {
     file,
     prompt
   };
+
+  return { agent, error: null };
+}
+
+export function parseAgentFile(content, file) {
+  return parseAgentFileDetailed(content, file).agent;
 }

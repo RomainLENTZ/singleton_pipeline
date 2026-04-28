@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 
 export const claudeRunner = {
   id: 'claude',
+  command: 'claude',
 
   async run({ cwd, systemPrompt, userPrompt, model }) {
     const args = [

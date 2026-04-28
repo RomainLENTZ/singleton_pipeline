@@ -59,6 +59,7 @@ function findUsage(value) {
 
 export const codexRunner = {
   id: 'codex',
+  command: 'codex',
 
   async run({ cwd, systemPrompt, userPrompt, model }) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'singleton-codex-'));

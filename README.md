@@ -3,7 +3,7 @@
 Build, visualize, and run local multi-agent pipelines from Markdown agent files with a visual builder and interactive CLI.
 
 Singleton is project-local by design:
-- agents usually live in `.claude/agents`
+- agents canonically live in `.singleton/agents`
 - pipelines live in `.singleton/pipelines`
 - run artifacts live in `.singleton/runs`
 
@@ -42,8 +42,8 @@ Each target project owns its own Singleton workspace:
 
 ```txt
 my-project/
-  .claude/agents/
   .singleton/
+    agents/
     agents.json
     pipelines/
     runs/
@@ -53,6 +53,7 @@ Important:
 - `.singleton/` is specific to the target project, not to this repo.
 - `singleton_pipeline` is the tool.
 - the project being scanned or executed is the source of truth for agents, pipelines, and runs.
+- `.claude/agents` is still scanned for compatibility with existing Claude setups.
 
 ## Quickstart
 
@@ -109,7 +110,6 @@ Main REPL commands:
 /run <name> [--dry] [--verbose]
 /scan
 /new
-/edit [agent-id]
 /serve
 /commit-last
 /ls
@@ -122,7 +122,6 @@ Autocomplete is available with `Tab`:
 ```txt
 /ru<Tab>              -> /run
 /run vue<Tab>         -> completes a pipeline name
-/edit reviewer<Tab>   -> completes an agent id
 /run pipeline <Tab>   -> suggests flags
 ```
 
@@ -152,6 +151,7 @@ This is intended for real runs, not `--dry-run`.
 ## Agent Format
 
 Agents are Markdown files with a `## Config` section and a prompt body.
+Singleton creates them in `.singleton/agents` by default.
 
 ```markdown
 # Code Generator
@@ -163,6 +163,7 @@ Agents are Markdown files with a `## Config` section and a prompt body.
 - **inputs**: spec, guidelines
 - **outputs**: source_code
 - **tags**: code, generation
+- **provider**: claude
 - **model**: claude-sonnet-4-6
 
 ---
@@ -185,6 +186,7 @@ Required config fields:
 Optional fields:
 
 - `tags`
+- `provider`
 - `model`
 - `estimated_tokens`
 
@@ -271,7 +273,7 @@ Example:
 ```json
 {
   "agent": "code-review",
-  "agent_file": ".claude/agents/code-review.md",
+  "agent_file": ".singleton/agents/code-review.md",
   "inputs": {
     "source_code": "$PIPE:code-generator.source_code",
     "guidelines": "$FILE:docs/guidelines.md"
@@ -333,7 +335,7 @@ cd packages/web && npm run build
 
 ## Notes
 
-- Agent discovery prioritizes `.claude/agents/*.md` when present.
+- Agent discovery prioritizes `.singleton/agents/*.md`, then `.claude/agents/*.md`.
 - `.singleton/agents.json` is a cache file.
 - `.singleton/pipelines` contains project-local pipeline definitions.
 - `.singleton/runs` contains run artifacts and manifests.

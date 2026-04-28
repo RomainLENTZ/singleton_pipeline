@@ -10,7 +10,7 @@ import { agentsRouter } from './routes/agents.js';
 import { pipelinesRouter } from './routes/pipelines.js';
 import { filesRouter } from './routes/files.js';
 
-export async function startServer({ port = 4317, root = process.cwd() } = {}) {
+export async function startServer({ port = 4317, root = process.cwd(), logger = console.log } = {}) {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '2mb' }));
@@ -31,8 +31,8 @@ export async function startServer({ port = 4317, root = process.cwd() } = {}) {
 
   return new Promise((resolve) => {
     const server = app.listen(port, () => {
-      console.log(`Singleton server listening on http://localhost:${port}`);
-      console.log(`Project root: ${root}`);
+      logger(`Singleton server listening on http://localhost:${port}`);
+      logger(`Project root: ${root}`);
       resolve(server);
     });
   });
