@@ -5,6 +5,25 @@ This document is the detailed reference for Singleton.
 Use the main [README](../README.md) for the product overview and quickstart.
 Use this file when you need exact behavior, node semantics, command details, or execution rules.
 
+## Table of contents
+
+- [Terminology](#terminology)
+- [Project workspace](#project-workspace)
+- [Agent model](#agent-model)
+- [Pipeline model](#pipeline-model)
+- [Node types](#node-types)
+- [References](#references)
+- [Execution model](#execution-model)
+- [Deliverables vs intermediates](#deliverables-vs-intermediates)
+- [Run artifacts](#run-artifacts)
+- [Multi-provider model](#multi-provider-model)
+- [CLI commands](#cli-commands)
+- [REPL commands](#repl-commands)
+- [`/commit-last`](#commit-last)
+- [Builder](#builder)
+- [Full pipeline example](#full-pipeline-example)
+- [Troubleshooting](#troubleshooting)
+
 ## Terminology
 
 - **project**: the target codebase where Singleton runs
@@ -14,7 +33,7 @@ Use this file when you need exact behavior, node semantics, command details, or 
 - **deliverable**: a real project file written outside `.singleton`
 - **intermediate**: a report, plan, log, or temporary artifact written inside `.singleton`
 
-## Project Workspace
+## Project workspace
 
 Singleton is project-local. A typical target project looks like this:
 
@@ -39,7 +58,7 @@ Compatibility sources:
 - `.claude/agents/` is scanned as a legacy or external source
 - `AGENTS.md` and `AGENTS.override.md` are not agents; they are Codex project instructions
 
-## Agent Model
+## Agent model
 
 Agents are Markdown files.
 
@@ -79,24 +98,15 @@ Your prompt here.
 
 ### Field semantics
 
-- `id`
-  - stable identifier used in scans and step definitions
-- `description`
-  - human-readable summary shown in scan output and tooling
-- `inputs`
-  - comma-separated list of logical inputs exposed to the prompt
-- `outputs`
-  - comma-separated list of logical outputs expected from the step
-- `tags`
-  - optional categorization
-- `provider`
-  - execution backend, currently `claude` or `codex`
-- `model`
-  - provider-specific model name
-- `permission_mode`
-  - currently relevant for Claude integrations
-- `estimated_tokens`
-  - optional metadata for planning
+- `id` — stable identifier used in scans and step definitions
+- `description` — human-readable summary shown in scan output and tooling
+- `inputs` — comma-separated list of logical inputs exposed to the prompt
+- `outputs` — comma-separated list of logical outputs expected from the step
+- `tags` — optional categorization
+- `provider` — execution backend, currently `claude` or `codex`
+- `model` — provider-specific model name
+- `permission_mode` — applies to Claude only, ignored for Codex runs
+- `estimated_tokens` — optional metadata for planning
 
 ### Provider resolution
 
@@ -112,13 +122,15 @@ Model resolution:
 2. `agent.model`
 3. no explicit model
 
-Permission mode resolution:
+Permission mode resolution (Claude only):
 
 1. `step.permission_mode`
 2. `agent.permission_mode`
 3. no explicit permission mode
 
-## Pipeline Model
+If `step.provider` overrides `agent.provider`, the step value wins silently — the agent's preference is treated as a default, not a constraint.
+
+## Pipeline model
 
 A pipeline is a directed graph serialized as JSON.
 
@@ -131,9 +143,11 @@ Conceptually:
 At runtime, Singleton executes steps in dependency order.
 Dependencies are derived from the serialized references used in step inputs, especially `$PIPE:...`.
 
-## Node Types
+A complete example is in [Full pipeline example](#full-pipeline-example).
 
-### Input Node
+## Node types
+
+### Input node
 
 Purpose:
 
@@ -156,14 +170,10 @@ Typical shape:
 
 Relevant fields:
 
-- `id`
-  - referenced later through `$INPUT:<id>`
-- `label`
-  - user-facing prompt label
-- `subtype`
-  - `text` or `file`
-- `value`
-  - optional default value
+- `id` — referenced later through `$INPUT:<id>`
+- `label` — user-facing prompt label
+- `subtype` — `text` or `file`
+- `value` — optional default value
 
 Behavior:
 
@@ -171,7 +181,7 @@ Behavior:
 - in dry-runs, placeholder values are injected
 - for `file` inputs, the value is treated as a path and resolved through the file loader
 
-### Agent Node
+### Agent node
 
 Purpose:
 
@@ -202,77 +212,53 @@ Singleton uses four reference types.
 
 Use when a step needs a runtime value from an input node.
 
-Example:
-
 ```json
-{
-  "request": "$INPUT:input-request"
-}
+{ "request": "$INPUT:input-request" }
 ```
 
 Behavior:
 
 - resolves to a string value
-- if the input node subtype is `file`, Singleton treats the resolved value as a file path and reads the file(s)
+- if the input node subtype is `file`, Singleton treats the resolved value as a path and reads the file(s)
 
 ### `$FILE:<path>`
 
-Use for reading or writing a single file.
-
-Read example:
+Read or write a single file.
 
 ```json
-{
-  "spec": "$FILE:docs/spec.md"
-}
-```
-
-Write example:
-
-```json
-{
-  "result": "$FILE:src/generated/result.md"
-}
+{ "spec": "$FILE:docs/spec.md" }
 ```
 
 Behavior:
 
-- input side:
-  - resolves file content and injects it into the prompt as `<file path="...">...</file>`
-- output side:
-  - writes the output content to the target path
+- **input side**: file content is read and injected into the prompt as `<file path="...">...</file>`
+- **output side**: after the step finishes, the value mapped to that output key is written verbatim to the target path. The agent's output is treated as a raw string — no JSON parsing, no transformation.
+- writes happen between the step that produced the value and the next step that depends on it
+- target paths are validated against the project root before writing
 
 ### `$PIPE:<agent>.<output>`
 
-Use to pass one step output to another.
-
-Example:
+Pass one step output to another.
 
 ```json
-{
-  "source_code": "$PIPE:code-generator.source_code"
-}
+{ "source_code": "$PIPE:code-generator.source_code" }
 ```
 
 Behavior:
 
 - references a previous step output kept in memory during the run
-- drives dependency ordering
-- must point to an already-available upstream step output
+- drives dependency ordering — `$PIPE` is what makes the graph topological
+- must point to an already-available upstream step output, otherwise preflight fails
 
 ### `$FILES:<dir>`
 
 Use when a step needs to create multiple files from one output.
 
-Example:
-
 ```json
-{
-  "files": "$FILES:src/generated"
-}
+{ "files": "$FILES:src/generated" }
 ```
 
-Expected output format:
+The agent must return a JSON-parseable string with this shape:
 
 ```json
 [
@@ -283,10 +269,11 @@ Expected output format:
 
 Behavior:
 
+- the runner parses the agent output as JSON; if parsing fails the step is reported as failed
 - each entry is written relative to the target base directory
 - paths are validated against the project root before writing
 
-## Execution Model
+## Execution model
 
 Each run goes through these phases:
 
@@ -336,14 +323,12 @@ Dry-run:
 
 Use it to validate a pipeline structure safely.
 
-## Deliverables vs Intermediates
+## Deliverables vs intermediates
 
 Singleton distinguishes between:
 
-- **deliverables**
-  - real project files outside `.singleton`
-- **intermediates**
-  - reports, notes, plans, debug artifacts, or output files inside `.singleton`
+- **deliverables** — real project files outside `.singleton`
+- **intermediates** — reports, notes, plans, debug artifacts, or output files inside `.singleton`
 
 This distinction is used in:
 
@@ -351,7 +336,7 @@ This distinction is used in:
 - execution recap
 - `/commit-last`
 
-## Run Artifacts
+## Run artifacts
 
 Each real run creates a versioned directory:
 
@@ -359,24 +344,38 @@ Each real run creates a versioned directory:
 .singleton/runs/<run-id>/
 ```
 
-Singleton also updates:
+Singleton also updates `.singleton/runs/latest` to point at the most recent run.
 
-```txt
-.singleton/runs/latest
+A run manifest looks like this:
+
+```json
+{
+  "pipeline": "contact-view-polish-mixed",
+  "project_root": "/abs/path/to/project",
+  "created_at": "2026-04-28T14:32:11.000Z",
+  "deliverables": [
+    { "path": "src/contact-view.js", "size": 2048 }
+  ],
+  "intermediates": [
+    { "path": ".singleton/runs/2026-04-28T14-32-11/scout.md", "size": 512 }
+  ],
+  "steps": [
+    {
+      "agent": "scout",
+      "provider": "claude",
+      "model": "claude-sonnet-4-6",
+      "status": "ok",
+      "duration_ms": 8420,
+      "turns": 3,
+      "cost_usd": 0.012
+    }
+  ]
+}
 ```
 
-The run manifest contains:
+## Multi-provider model
 
-- pipeline name
-- project root
-- creation timestamp
-- deliverables
-- intermediates
-- per-step stats
-
-## Multi-Provider Model
-
-Singleton’s core model is provider-neutral:
+Singleton's core model is provider-neutral:
 
 - agents are Markdown documents
 - steps are pipeline orchestration units
@@ -384,37 +383,33 @@ Singleton’s core model is provider-neutral:
 
 ### Claude
 
-Claude runs:
-
-- execute through the local `claude` CLI
-- support optional `permission_mode`
-- support explicit `model`
+- executes through the local `claude` CLI
+- supports optional `permission_mode`
+- supports explicit `model`
 
 If `permission_mode` is not set, Singleton does not inject one explicitly.
 
 ### Codex
 
-Codex runs:
+- executes through the local `codex` CLI
+- supports explicit `model`
+- automatically receives project instructions from discovered `AGENTS.md` / `AGENTS.override.md`
+- ignores `permission_mode`
 
-- execute through the local `codex` CLI
-- support explicit `model`
-- automatically receive project instructions from discovered `AGENTS.md` / `AGENTS.override.md`
+`AGENTS.md` is not scanned as a Singleton agent — it is forwarded only as Codex project context.
 
-Important:
+## CLI commands
 
-- `AGENTS.md` is not scanned as a Singleton agent
-- it is forwarded only as Codex project context
+Global flags: every command supports `--help`.
 
-## CLI Commands
+Exit codes: `0` on success, non-zero on any failure (preflight, step error, invalid arguments). There is no finer-grained code grid.
 
 ### `scan`
 
 Scan a project for agents and write the agent cache.
 
-Example:
-
 ```bash
-node packages/cli/src/index.js scan /path/to/project
+singleton scan /path/to/project
 ```
 
 What it does:
@@ -428,35 +423,29 @@ What it does:
 
 Run a pipeline JSON file.
 
-Example:
-
 ```bash
-node packages/cli/src/index.js run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json
+singleton run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json
 ```
 
 Flags:
 
-- `--dry-run`
-- `--verbose`
+- `--dry-run` — validate without calling any LLM CLI
+- `--verbose` — surface raw provider stdout/stderr
 
 ### `serve`
 
 Start the builder API server.
 
-Example:
-
 ```bash
-node packages/cli/src/index.js serve --root /path/to/project
+singleton serve --root /path/to/project
 ```
 
 ### `new`
 
 Create a new agent interactively.
 
-Example:
-
 ```bash
-node packages/cli/src/index.js new --root /path/to/project
+singleton new --root /path/to/project
 ```
 
 Behavior:
@@ -470,15 +459,11 @@ Behavior:
 
 Start the interactive shell.
 
-Example:
-
 ```bash
-node packages/cli/src/index.js
+singleton
 ```
 
-## REPL Commands
-
-Main commands:
+## REPL commands
 
 ```txt
 /run <name> [--dry] [--verbose]
@@ -513,62 +498,95 @@ Shell features:
 
 ## Builder
 
-The web builder is the visual authoring interface.
+The web builder is the visual authoring interface served by `singleton serve` + `packages/web` (Vite dev server on port 5173).
 
-Its job is to:
+It lets you:
 
-- display available agents
-- let you place agent and input nodes
-- connect outputs to downstream inputs
-- serialize the graph into a pipeline JSON
+- browse scanned agents and drop them on a canvas as agent nodes
+- add input nodes (`text` or `file`) and bind them to step inputs
+- draw edges from agent outputs to downstream inputs — these become `$PIPE` references
+- bind step outputs to `$FILE` / `$FILES` sinks
+- save the resulting graph as a pipeline JSON in `.singleton/pipelines/`
 
-Conceptually:
+The serialization mapping:
 
-- input nodes become `$INPUT`
-- graph edges become serialized references
-- graph order becomes execution order
+- input nodes → `$INPUT:<id>` references
+- graph edges → serialized references
+- topological order → execution order
 
-## Example Project
+Cycles are rejected at save time.
 
-The reference mixed-provider example lives here:
+## Full pipeline example
 
-```txt
-examples/mixed-claude-codex
+Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For an executable example, see `examples/mixed-claude-codex/`.
+
+A two-step pipeline: a generator writes code from a spec, a reviewer reads that code and emits a report.
+
+```json
+{
+  "name": "generate-and-review",
+  "nodes": [
+    {
+      "id": "input-spec",
+      "type": "input",
+      "data": { "label": "spec", "subtype": "file", "value": "" }
+    }
+  ],
+  "steps": [
+    {
+      "agent": "code-generator",
+      "agent_file": ".singleton/agents/code-generator.md",
+      "inputs": {
+        "spec": "$INPUT:input-spec"
+      },
+      "outputs": {
+        "source_code": "$FILE:src/generated/output.js"
+      }
+    },
+    {
+      "agent": "code-review",
+      "agent_file": ".singleton/agents/code-review.md",
+      "inputs": {
+        "source_code": "$PIPE:code-generator.source_code"
+      },
+      "outputs": {
+        "report": "$FILE:.singleton/runs/latest/review.md"
+      }
+    }
+  ]
+}
 ```
 
-It includes:
+What this pipeline does at runtime:
 
-- Claude agents in `.claude/agents`
-- a Codex agent in `.singleton/agents`
-- Codex project instructions
-- a mixed pipeline
+1. prompts the user for the path to the spec file
+2. runs `code-generator` with the spec content injected as `<file>...</file>`
+3. writes the generator's output to `src/generated/output.js` (a deliverable)
+4. runs `code-review` with the generator's output passed via `$PIPE`
+5. writes the review to `.singleton/runs/latest/review.md` (an intermediate)
+6. emits a manifest distinguishing the deliverable from the intermediate
 
-## Tests
+See `examples/mixed-claude-codex/` for an end-to-end example using both Claude and Codex.
 
-Run the suite:
+## Troubleshooting
 
-```bash
-npm test
-```
+**`claude: command not found` (or `codex: command not found`) during preflight**
+The corresponding CLI is not in `$PATH`. Install it and ensure it runs standalone before retrying. Singleton never installs or upgrades provider CLIs.
 
-Watch mode:
+**Provider call fails immediately with an auth error**
+The CLI is installed but no active session/credentials. Run the provider's login flow once interactively, then retry.
 
-```bash
-npm run test:watch
-```
+**Preflight error: `$PIPE:foo.bar` references unknown step**
+The upstream step `foo` is missing from the pipeline, or its `outputs` don't declare `bar`. Check both the step list order and the agent's `outputs:` line in `## Config`.
 
-Current coverage focuses on:
+**Preflight error: unsafe sink path**
+A `$FILE` or `$FILES` target resolves outside the project root. Singleton refuses to write there. Make the path relative to the project root.
 
-- parser behavior
-- preflight behavior
-- builder graph ordering and cycle detection
+**`permission_mode` rejected for a Claude step**
+Only specific values are accepted by the Claude runner. Check the agent's `## Config` and the step override.
 
-## Repository Layout
+**Step succeeds but no file appears on disk**
+The step output is kept in memory unless a sink (`$FILE` or `$FILES`) is wired in `outputs`. Without a sink, the value is only available to downstream `$PIPE` references.
 
-```txt
-packages/cli      CLI, REPL, scanner, parser, executor, runners
-packages/server   API
-packages/web      builder UI
-docs/             detailed documentation
-examples/         official example projects
-```
+**`$FILES` step fails with a parse error**
+The agent's output isn't valid JSON of the expected shape. Inspect the raw output with `--verbose` and adjust the prompt to constrain the format.

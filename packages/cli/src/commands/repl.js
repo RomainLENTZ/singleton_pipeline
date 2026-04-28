@@ -217,12 +217,14 @@ async function showWelcome(root, shell) {
     '',
   ];
   const TAGLINE  = 'one to rule them all';
-  const bottomBlockHeight = 2 + SINGLETON_RAW.length;
+  const CREDIT = 'Developed by Romain LENTZ';
+  const bottomBlockHeight = 3 + SINGLETON_RAW.length;
   const spacerLines = Math.max(0, contentHeight - headerLines.length - bottomBlockHeight);
 
   // Track shimmer positions.
   const welcomeRow = CONTENT_PAD_TOP + 2;
-  const taglineRow = CONTENT_PAD_TOP + headerLines.length + spacerLines;
+  const creditRow = CONTENT_PAD_TOP + headerLines.length + spacerLines;
+  const taglineRow = creditRow + 1;
 
   for (const line of headerLines) {
     shell.log(line);
@@ -231,6 +233,7 @@ async function showWelcome(root, shell) {
     shell.log('');
   }
 
+  shell.log(`{${C.dimV}-fg}${CREDIT}{/}`);
   shell.log(' '.repeat(TAGLINE.length));
   shell.log('');
   for (const line of SINGLETON_RAW) {
