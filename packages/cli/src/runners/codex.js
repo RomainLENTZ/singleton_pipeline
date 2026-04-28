@@ -2,20 +2,28 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { discoverCodexProjectInstructions } from './codex-instructions.js';
 
-function buildPrompt(systemPrompt, userPrompt) {
-  return [
-    'Follow the system instructions exactly.',
-    '',
-    '<system>',
-    systemPrompt,
-    '</system>',
-    '',
-    '<user>',
-    userPrompt,
-    '</user>',
-    '',
-  ].join('\n');
+function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
+  const parts = ['Follow the system instructions exactly.', ''];
+
+  if (projectInstructions) {
+    parts.push('<codex_project_instructions>');
+    parts.push(projectInstructions);
+    parts.push('</codex_project_instructions>');
+    parts.push('');
+  }
+
+  parts.push('<system>');
+  parts.push(systemPrompt);
+  parts.push('</system>');
+  parts.push('');
+  parts.push('<user>');
+  parts.push(userPrompt);
+  parts.push('</user>');
+  parts.push('');
+
+  return parts.join('\n');
 }
 
 function safeJsonParse(line) {
@@ -61,10 +69,11 @@ export const codexRunner = {
   id: 'codex',
   command: 'codex',
 
-  async run({ cwd, systemPrompt, userPrompt, model }) {
+  async run({ cwd, projectRoot = cwd, currentDir = cwd, systemPrompt, userPrompt, model }) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'singleton-codex-'));
     const outputFile = path.join(tempDir, 'last-message.txt');
-    const prompt = buildPrompt(systemPrompt, userPrompt);
+    const projectInstructions = await discoverCodexProjectInstructions(projectRoot, currentDir);
+    const prompt = buildPrompt(systemPrompt, userPrompt, projectInstructions.text);
 
     const args = [
       'exec',
@@ -142,7 +151,7 @@ export const codexRunner = {
         turns,
         costUsd: null,
         tokens: usage,
-        raw: { events, stderr },
+        raw: { events, stderr, projectInstructionFiles: projectInstructions.files },
       },
     };
   },

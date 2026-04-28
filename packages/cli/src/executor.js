@@ -8,6 +8,7 @@ import { style, line } from './theme.js';
 import { createTimeline } from './timeline.js';
 import { C } from './shell.js';
 import { getRunner } from './runners/index.js';
+import { discoverCodexProjectInstructions } from './runners/codex-instructions.js';
 
 export async function loadPipeline(filePath) {
   const raw = await fs.readFile(filePath, 'utf8');
@@ -191,6 +192,7 @@ function commandExists(command) {
 async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun }) {
   const errors = [];
   const warnings = [];
+  const infos = [];
   const stepAgents = new Map();
   const availablePipeOutputs = new Set();
 
@@ -292,10 +294,18 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     }
   }
 
+  if (usedProviders.includes('codex')) {
+    const projectInstructions = await discoverCodexProjectInstructions(cwd, cwd);
+    infos.push(
+      `Codex project instructions: ${projectInstructions.files.length} file${projectInstructions.files.length !== 1 ? 's' : ''} detected.`
+    );
+  }
+
   return {
     ok: errors.length === 0,
     errors,
     warnings,
+    infos,
     providerCount: usedProviders.length,
   };
 }
@@ -552,6 +562,11 @@ export async function runPipeline(filePath, opts = {}) {
     const preflight = await runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun });
     const preflightSeconds = (Date.now() - preflightStarted) / 1000;
 
+    if (preflight.infos.length) {
+      timeline.log(`── preflight info ──`);
+      for (const info of preflight.infos) timeline.logMuted(info);
+    }
+
     if (preflight.warnings.length) {
       timeline.log(`── preflight warnings ──`);
       for (const warning of preflight.warnings) timeline.logMuted(warning);
@@ -661,7 +676,15 @@ export async function runPipeline(filePath, opts = {}) {
       const started = Date.now();
       let result;
       try {
-        result = await runner.run({ cwd, systemPrompt, userPrompt: userMessage, model, verbose });
+        result = await runner.run({
+          cwd,
+          projectRoot: cwd,
+          currentDir: cwd,
+          systemPrompt,
+          userPrompt: userMessage,
+          model,
+          verbose,
+        });
       } catch (err) {
         failStep(timeline, timelineIndex, err.message, `Step "${step.agent}" failed: ${err.message}`);
       }
