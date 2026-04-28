@@ -8,6 +8,9 @@ Singleton stores everything inside the target project:
 - pipelines in `.singleton/pipelines`
 - run artifacts in `.singleton/runs`
 
+Need a deeper explanation of nodes, references, commands, and execution rules?
+See the full [reference documentation](docs/reference.md).
+
 ## Status
 
 Singleton is an early beta.
