@@ -9,6 +9,12 @@ import { createTimeline } from './timeline.js';
 import { C } from './shell.js';
 import { getRunner } from './runners/index.js';
 import { discoverCodexProjectInstructions } from './runners/codex-instructions.js';
+import {
+  assertWriteAllowed,
+  loadProjectSecurityConfig,
+  resolveSecurityPolicyWithConfig,
+  validateSecurityPolicy,
+} from './security/policy.js';
 
 export async function loadPipeline(filePath) {
   const raw = await fs.readFile(filePath, 'utf8');
@@ -41,16 +47,6 @@ async function resolveFileGlob(spec, cwd) {
     results.push({ path: f, content });
   }
   return results;
-}
-
-// Refuse sink paths that escape the project root after `$INPUT:` interpolation.
-function assertSinkInsideRoot(absSink, cwd, agentName, outputName) {
-  const rel = path.relative(cwd, absSink);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new Error(
-      `Step "${agentName}" output "${outputName}" resolves outside the project root: ${absSink}`
-    );
-  }
 }
 
 function resolvePipeRef(spec, registry) {
@@ -119,7 +115,44 @@ async function collectInputValues(pipeline, dryRun, promptFn = null) {
   return values;
 }
 
-function buildUserMessage(resolvedInputs, outputNames, workspaceInfo) {
+function buildSecurityPolicyBlock(securityPolicy) {
+  if (!securityPolicy) return [];
+
+  const lines = [
+    '<security_policy>',
+    `security_profile: ${securityPolicy.profile}`,
+  ];
+
+  if (securityPolicy.allowedPaths.length) {
+    lines.push('allowed_paths:');
+    for (const entry of securityPolicy.allowedPaths) lines.push(`- ${entry}`);
+  }
+
+  if (securityPolicy.blockedPaths.length) {
+    lines.push('blocked_paths:');
+    for (const entry of securityPolicy.blockedPaths) lines.push(`- ${entry}`);
+  }
+
+  lines.push('');
+  lines.push('Rules:');
+  if (securityPolicy.profile === 'read-only') {
+    lines.push('- Do not create, edit, move, or delete project files.');
+    lines.push('- You may read files and produce only the final pipeline output.');
+    lines.push('- If a change is required, describe it in your output instead of applying it.');
+  } else if (securityPolicy.profile === 'restricted-write') {
+    lines.push('- You may modify project files only inside allowed_paths.');
+    lines.push('- If the requested change requires files outside allowed_paths, stop and explain it in your output.');
+  } else if (securityPolicy.profile === 'workspace-write') {
+    lines.push('- You may modify project files, except blocked_paths.');
+  } else if (securityPolicy.profile === 'dangerous') {
+    lines.push('- You have broad write permissions inside the project root. Use the smallest necessary change.');
+  }
+  lines.push('- Internal run artifacts are handled by Singleton; do not write into .singleton manually.');
+  lines.push('</security_policy>');
+  return lines;
+}
+
+function buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPolicy) {
   const parts = [];
   if (workspaceInfo) {
     parts.push('<workspace>');
@@ -131,6 +164,11 @@ function buildUserMessage(resolvedInputs, outputNames, workspaceInfo) {
     parts.push(`- Intermediate files (reviews, plans, logs, notes, debug, scratch): write them inside the step working directory above.`);
     parts.push(`- Never write deliverable source code into .singleton/ or into the step working directory.`);
     parts.push('</workspace>');
+    parts.push('');
+  }
+  const securityBlock = buildSecurityPolicyBlock(securityPolicy);
+  if (securityBlock.length) {
+    parts.push(...securityBlock);
     parts.push('');
   }
   for (const [name, value] of Object.entries(resolvedInputs)) {
@@ -155,18 +193,37 @@ function resolveProjectRoot(pipelineDir) {
   return pipelineDir;
 }
 
-// If `$FILE:` target lands inside <root>/.singleton/ (but not inside .singleton/runs/),
-// redirect it into the current step's workspace, preserving the basename. Paths outside
-// .singleton/ are real project deliverables — left untouched.
-function rewriteFileSink(sink, { cwd, stepDir }) {
-  if (typeof sink !== 'string' || !sink.startsWith('$FILE:')) return sink;
-  const raw = sink.slice('$FILE:'.length).trim();
+function isInsidePath(absPath, absRoot) {
+  const rel = path.relative(absRoot, absPath);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function isSingletonInternalPath(absPath, cwd) {
+  return isInsidePath(absPath, path.join(cwd, '.singleton'));
+}
+
+function assertRunArtifactWriteAllowed(absPath, artifactRoot, agentName, outputName) {
+  if (!isInsidePath(absPath, artifactRoot)) {
+    throw new Error(
+      `Step "${agentName}" output "${outputName}" resolves outside the run artifact workspace: ${absPath}`
+    );
+  }
+}
+
+// If an internal Singleton sink lands inside <root>/.singleton/ (but not inside
+// .singleton/runs/), redirect it into the current step's workspace. Project
+// deliverables are left untouched and remain subject to the security policy.
+function rewriteInternalSink(sink, { cwd, stepDir }) {
+  if (typeof sink !== 'string') return sink;
+  const prefix = sink.startsWith('$FILE:') ? '$FILE:' : sink.startsWith('$FILES:') ? '$FILES:' : null;
+  if (!prefix) return sink;
+  const raw = sink.slice(prefix.length).trim();
   const absOut = path.isAbsolute(raw) ? raw : path.join(cwd, raw);
   const rel = path.relative(cwd, absOut);
   if (!rel.startsWith('.singleton' + path.sep)) return sink;
   if (rel.startsWith(path.join('.singleton', 'runs') + path.sep)) return sink;
   const basename = path.basename(absOut);
-  return `$FILE:${path.join(stepDir, basename)}`;
+  return `${prefix}${path.join(stepDir, basename)}`;
 }
 
 function parseOutputs(text, outputNames) {
@@ -210,12 +267,28 @@ function createSilentTimeline() {
   };
 }
 
-function formatStepRuntimeMeta({ provider, model, permissionMode }) {
+function formatStepRuntimeMeta({ provider, model, permissionMode, securityProfile }) {
   const parts = [];
   if (provider) parts.push(provider);
   if (model) parts.push(model);
+  if (securityProfile) parts.push(`security:${securityProfile}`);
   if (permissionMode) parts.push(`perm:${permissionMode}`);
   return parts.join(' · ');
+}
+
+function formatSecurityHighlight({ label, provider, permissionMode, securityPolicy }) {
+  const parts = [`${label}: security_profile "${securityPolicy.profile}"`];
+  if (provider === 'claude' && permissionMode) {
+    parts.push(`permission_mode "${permissionMode}"`);
+  }
+  if (securityPolicy.profile === 'restricted-write') {
+    parts.push(`allowed_paths ${securityPolicy.allowedPaths.join(', ') || '—'}`);
+  }
+  return parts.join(' · ');
+}
+
+function shouldHighlightSecurity({ provider, permissionMode, securityPolicy }) {
+  return securityPolicy.profile !== 'workspace-write' || (provider === 'claude' && Boolean(permissionMode));
 }
 
 function commandExists(command) {
@@ -226,12 +299,36 @@ function commandExists(command) {
   });
 }
 
-async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun }) {
+function runCommand(cmd, args, { cwd }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d.toString()));
+    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || stdout.trim() || `${cmd} exited ${code}`));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun, securityConfig }) {
   const errors = [];
   const warnings = [];
   const infos = [];
+  const securityHighlights = [];
   const stepAgents = new Map();
   const availablePipeOutputs = new Set();
+
+  if (securityConfig) {
+    const relConfig = path.relative(cwd, securityConfig.file);
+    infos.push(`Project security config: ${relConfig} · default_profile "${securityConfig.defaultProfile}".`);
+  }
 
   for (const def of inputDefs) {
     const value = inputValues[def.id];
@@ -277,6 +374,10 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
 
     parsedAgents.push({ step, agent });
     stepAgents.set(step.agent, agent);
+    const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
+    for (const error of validateSecurityPolicy(securityPolicy)) {
+      errors.push(`${label} ${error}.`);
+    }
 
     let provider;
     try {
@@ -298,6 +399,9 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     }
     if (provider === 'claude' && permissionMode === 'bypassPermissions') {
       infos.push(`${label} runs Claude with permission_mode "${permissionMode}".`);
+    }
+    if (shouldHighlightSecurity({ provider, permissionMode, securityPolicy })) {
+      securityHighlights.push(formatSecurityHighlight({ label, provider, permissionMode, securityPolicy }));
     }
 
     for (const [name, spec] of Object.entries(step.inputs || {})) {
@@ -336,9 +440,16 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
       const prefix = sink.startsWith('$FILE:') ? '$FILE:' : '$FILES:';
       const rawPath = sink.slice(prefix.length).trim();
       const absOut = path.isAbsolute(rawPath) ? rawPath : path.resolve(cwd, rawPath);
-      const rel = path.relative(cwd, absOut);
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
-        errors.push(`${label} output "${outputName}" sink resolves outside project root: ${rawPath}`);
+      if (isSingletonInternalPath(absOut, cwd)) continue;
+      try {
+        assertWriteAllowed(absOut, {
+          root: cwd,
+          agentName: step.agent,
+          outputName,
+          policy: securityPolicy,
+        });
+      } catch (err) {
+        errors.push(err.message);
       }
     }
   }
@@ -368,6 +479,7 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     errors,
     warnings,
     infos,
+    securityHighlights,
     providerCount: usedProviders.length,
   };
 }
@@ -408,7 +520,12 @@ function formatTurns(value) {
   return value > 0 ? String(value) : '—';
 }
 
-function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
+function formatPolicyLabel({ securityProfile, permissionMode }) {
+  const policy = securityProfile || '—';
+  return permissionMode && permissionMode !== '—' ? `${policy} · perm:${permissionMode}` : policy;
+}
+
+function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = null }) {
   const totalSeconds = stats.reduce((sum, s) => sum + (s.seconds || 0), 0);
   const totalCost = stats.reduce((sum, s) => sum + (s.cost || 0), 0);
   const totalTurns = stats.reduce((sum, s) => sum + (s.turns || 0), 0);
@@ -418,7 +535,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     agent: s.agent,
     provider: s.provider || '—',
     model: s.model || '—',
-    permission: s.permissionMode || '—',
+    policy: formatPolicyLabel({ securityProfile: s.securityProfile, permissionMode: s.permissionMode }),
     status: s.status,
     time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
     turns: formatTurns(s.turns),
@@ -430,8 +547,8 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     agent: 'TOTAL',
     provider: '—',
     model: '—',
-    permission: '—',
-    status: dryRun ? 'dry-run' : 'done',
+    policy: '—',
+    status: runStatus || (dryRun ? 'dry-run' : 'done'),
     time: formatSeconds(totalSeconds),
     turns: formatTurns(totalTurns),
     cost: formatCost(totalCost),
@@ -443,7 +560,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     agent: Math.max(5, ...allRows.map((r) => visibleLength(r.agent))),
     provider: Math.max(8, ...allRows.map((r) => visibleLength(r.provider))),
     model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
-    permission: Math.max(4, ...allRows.map((r) => visibleLength(r.permission))),
+    policy: Math.max(6, ...allRows.map((r) => visibleLength(r.policy))),
     status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
     time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
     turns: Math.max(5, ...allRows.map((r) => visibleLength(r.turns))),
@@ -455,7 +572,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     '─'.repeat(widths.agent + 2),
     '─'.repeat(widths.provider + 2),
     '─'.repeat(widths.model + 2),
-    '─'.repeat(widths.permission + 2),
+    '─'.repeat(widths.policy + 2),
     '─'.repeat(widths.status + 2),
     '─'.repeat(widths.time + 2),
     '─'.repeat(widths.turns + 2),
@@ -468,7 +585,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
       ` ${padVisible(r.agent, widths.agent)} `,
       ` ${padVisible(r.provider, widths.provider)} `,
       ` ${padVisible(r.model, widths.model)} `,
-      ` ${padVisible(r.permission, widths.permission)} `,
+      ` ${padVisible(r.policy, widths.policy)} `,
       ` ${padVisible(r.status, widths.status)} `,
       ` ${padVisible(r.time, widths.time, 'right')} `,
       ` ${padVisible(r.turns, widths.turns, 'right')} `,
@@ -480,7 +597,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
     '',
     '{bold}Summary{/}',
     '',
-    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', permission: 'Perm', status: 'Status', time: 'Time', turns: 'Turns', cost: 'Cost' }),
+    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', policy: 'Policy', status: 'Status', time: 'Time', turns: 'Turns', cost: 'Cost' }),
     hr,
     ...rows.map(row),
     hr,
@@ -502,7 +619,18 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd }) {
   return lines;
 }
 
-const SNAPSHOT_SKIP_DIRS = new Set(['.git', '.singleton', 'node_modules', 'dist', 'build', '.next', '.cache', 'coverage']);
+const SNAPSHOT_SKIP_DIRS = new Set([
+  '.git',
+  '.singleton',
+  '.idea',
+  '.vscode',
+  'node_modules',
+  'dist',
+  'build',
+  '.next',
+  '.cache',
+  'coverage',
+]);
 
 async function snapshotProjectFiles(root, rel = '', out = new Map()) {
   const abs = path.join(root, rel);
@@ -538,7 +666,99 @@ function detectSnapshotChanges(before, after, root) {
   return changed;
 }
 
-async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [] }) {
+function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
+  const violations = [];
+  for (const change of changes) {
+    try {
+      assertWriteAllowed(change.absPath, {
+        root: cwd,
+        agentName: step.agent,
+        outputName: 'direct project change',
+        policy: securityPolicy,
+      });
+    } catch (err) {
+      violations.push({
+        path: change.relPath,
+        reason: err.message,
+      });
+    }
+  }
+  return violations;
+}
+
+async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = {}) {
+  try {
+    const { stdout } = await runCommand('git', ['diff', '--', relPath], { cwd });
+    const lines = stdout.trimEnd().split('\n').filter(Boolean);
+    if (lines.length === 0) return ['No git diff available for this path.'];
+    const clipped = lines.slice(0, maxLines);
+    if (lines.length > maxLines) clipped.push(`... diff truncated (${lines.length - maxLines} more lines)`);
+    return clipped;
+  } catch {
+    return ['No git diff available for this path.'];
+  }
+}
+
+async function logViolationDiffPreviews({ violations, cwd, timeline }) {
+  const maxFiles = 5;
+  const shown = violations.slice(0, maxFiles);
+  for (const violation of shown) {
+    timeline.log(`── diff ${violation.path} ──`);
+    const preview = await getViolationDiffPreview(cwd, violation.path);
+    for (const line of preview) timeline.logMuted(line);
+  }
+  if (violations.length > maxFiles) {
+    timeline.logMuted(`... ${violations.length - maxFiles} more violated file(s) not shown`);
+  }
+}
+
+async function handlePostRunViolations({ violations, step, securityPolicy, timeline, timelineIndex, shell, cwd }) {
+  if (violations.length === 0) return;
+
+  timeline.log(`── post-run security violation ──`);
+  timeline.logMuted(`Step "${step.agent}" changed files outside its security policy.`);
+  timeline.logMuted(`security_profile: ${securityPolicy.profile}`);
+  for (const violation of violations) {
+    timeline.logMuted(`- ${violation.path}`);
+  }
+  await logViolationDiffPreviews({ violations, cwd, timeline });
+
+  if (!shell) {
+    failStep(
+      timeline,
+      timelineIndex,
+      `${violations.length} security violation${violations.length > 1 ? 's' : ''}`,
+      `Post-run security validation failed for "${step.agent}":\n- ${violations.map((v) => v.path).join('\n- ')}`
+    );
+  }
+
+  while (true) {
+    const answer = (await shell.prompt('Security violation: continue, stop, or diff? (c/s/d)')).trim().toLowerCase();
+    if (answer === 'd' || answer === 'diff') {
+      await logViolationDiffPreviews({ violations, cwd, timeline });
+      continue;
+    }
+    if (answer === 'c' || answer === 'continue' || answer === 'y' || answer === 'yes') {
+      timeline.log(`{${C.peach}-fg}!{/} Continued after security violation for ${step.agent}.`);
+      return;
+    }
+    if (!answer || answer === 's' || answer === 'stop' || answer === 'n' || answer === 'no') {
+      break;
+    }
+    timeline.logMuted('Choose c/continue, s/stop, or d/diff.');
+  }
+
+  {
+    failStep(
+      timeline,
+      timelineIndex,
+      'stopped by security review',
+      `Pipeline stopped after post-run security validation for "${step.agent}".`
+    );
+  }
+}
+
+async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [], status = 'done', error = null }) {
   if (!runDir) return;
 
   const uniqueWrites = [];
@@ -557,6 +777,10 @@ async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrite
     pipeline: pipeline.name,
     projectRoot: cwd,
     createdAt: new Date().toISOString(),
+    status,
+    error: error ? {
+      message: error.message,
+    } : null,
     deliverables: deliverables.map((entry) => ({
       path: entry.relPath,
       absPath: entry.absPath,
@@ -567,6 +791,10 @@ async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrite
     })),
     stats: stats.map((s) => ({
       agent: s.agent,
+      provider: s.provider,
+      model: s.model,
+      securityProfile: s.securityProfile,
+      permissionMode: s.permissionMode,
       status: s.status,
       seconds: s.seconds,
       turns: s.turns,
@@ -586,7 +814,9 @@ export async function runPipeline(filePath, opts = {}) {
   const verbose = !!opts.verbose;
   const shell   = opts.shell || null;
   const quiet   = !!opts.quiet;
+  const securityConfig = await loadProjectSecurityConfig(cwd);
   const beforeSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
+  let currentSnapshot = beforeSnapshot;
 
   // Versioned workspace for this run — intermediate artifacts land here.
   const now = new Date();
@@ -625,11 +855,12 @@ export async function runPipeline(filePath, opts = {}) {
   const fileWrites = [];
   const verboseLog = [];
   const stats = [];
+  let runError = null;
 
   try {
     timeline.setRunning(0);
     const preflightStarted = Date.now();
-    const preflight = await runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun });
+    const preflight = await runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun, securityConfig });
     const preflightSeconds = (Date.now() - preflightStarted) / 1000;
 
     if (preflight.infos.length) {
@@ -637,17 +868,33 @@ export async function runPipeline(filePath, opts = {}) {
       for (const info of preflight.infos) timeline.logMuted(info);
     }
 
+    if (preflight.securityHighlights.length) {
+      timeline.log(`── security profile preview ──`);
+      for (const item of preflight.securityHighlights) timeline.logMuted(item);
+    }
+
     if (preflight.warnings.length) {
       timeline.log(`── preflight warnings ──`);
       for (const warning of preflight.warnings) timeline.logMuted(warning);
     }
 
-    if (!preflight.ok) {
-      timeline.log(`── preflight errors ──`);
-      for (const error of preflight.errors) timeline.logMuted(error);
-      failStep(
-        timeline,
-        0,
+      if (!preflight.ok) {
+        timeline.log(`── preflight errors ──`);
+        for (const error of preflight.errors) timeline.logMuted(error);
+        stats.push({
+          agent: 'preflight checks',
+          provider: 'system',
+          model: '—',
+          securityProfile: '—',
+          permissionMode: '—',
+          status: 'failed',
+          seconds: preflightSeconds,
+          turns: 0,
+          cost: 0,
+        });
+        failStep(
+          timeline,
+          0,
         `${preflight.errors.length} error${preflight.errors.length > 1 ? 's' : ''}`,
         `Preflight checks failed:\n- ${preflight.errors.join('\n- ')}`
       );
@@ -659,6 +906,7 @@ export async function runPipeline(filePath, opts = {}) {
       agent: 'preflight checks',
       provider: 'system',
       model: '—',
+      securityProfile: '—',
       permissionMode: '—',
       status: 'done',
       seconds: preflightSeconds,
@@ -694,6 +942,7 @@ export async function runPipeline(filePath, opts = {}) {
           agent: step.agent,
           provider: step.provider || 'claude',
           model: step.model || '—',
+          securityProfile: resolveSecurityPolicyWithConfig(step, agent, securityConfig).profile,
           permissionMode: step.permission_mode || agent.permission_mode || '—',
           status: 'skipped',
           seconds: 0,
@@ -707,12 +956,14 @@ export async function runPipeline(filePath, opts = {}) {
         const provider = resolveProvider(step, agent);
         const model = resolveModel(step, agent);
         const permissionMode = resolvePermissionMode(step, agent);
+        const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
         timeline.setDone(timelineIndex, `dry-run · ${outputNames.join(', ')}`);
         for (const name of outputNames) registry[`${step.agent}.${name}`] = `(dry-run:${step.agent}.${name})`;
         stats.push({
           agent: step.agent,
           provider,
           model: model || '—',
+          securityProfile: securityPolicy.profile,
           permissionMode: permissionMode || '—',
           status: 'dry-run',
           seconds: 0,
@@ -731,15 +982,21 @@ export async function runPipeline(filePath, opts = {}) {
         resolvedInputs[name] = await resolveInput(spec, { registry, cwd, inputValues, inputDefs });
       }
 
-      const systemPrompt = agent.prompt || agent.description;
-      const workspaceInfo = stepDir ? { projectRoot: cwd, stepDirRel: path.relative(cwd, stepDir) } : null;
-      const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo);
       const provider = resolveProvider(step, agent);
       const model = resolveModel(step, agent);
       const permissionMode = resolvePermissionMode(step, agent);
+      const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
+      const systemPrompt = agent.prompt || agent.description;
+      const workspaceInfo = stepDir ? { projectRoot: cwd, stepDirRel: path.relative(cwd, stepDir) } : null;
+      const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPolicy);
       timeline.setRunning(
         timelineIndex,
-        formatStepRuntimeMeta({ provider, model: model || '', permissionMode })
+        formatStepRuntimeMeta({
+          provider,
+          model: model || '',
+          permissionMode,
+          securityProfile: securityPolicy.profile,
+        })
       );
       const runner = getRunner(provider);
 
@@ -747,10 +1004,11 @@ export async function runPipeline(filePath, opts = {}) {
         timeline.log(`── system prompt ──`);
         for (const l of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(l);
         timeline.log(`── user message ──`);
-        for (const l of userMessage.split('\n').slice(0, 8)) timeline.logMuted(l);
+        for (const l of userMessage.split('\n').slice(0, 12)) timeline.logMuted(l);
       }
 
       const started = Date.now();
+      const stepBeforeSnapshot = currentSnapshot;
       let result;
       try {
         result = await runner.run({
@@ -764,6 +1022,17 @@ export async function runPipeline(filePath, opts = {}) {
           verbose,
         });
       } catch (err) {
+        stats.push({
+          agent: step.agent,
+          provider,
+          model: model || '—',
+          securityProfile: securityPolicy.profile,
+          permissionMode: permissionMode || '—',
+          status: 'failed',
+          seconds: (Date.now() - started) / 1000,
+          turns: 0,
+          cost: 0,
+        });
         failStep(timeline, timelineIndex, err.message, `Step "${step.agent}" failed: ${err.message}`);
       }
       const elapsedSeconds = (Date.now() - started) / 1000;
@@ -787,11 +1056,12 @@ export async function runPipeline(filePath, opts = {}) {
           }
         }
 
-        if (stepDir) sink = rewriteFileSink(sink, { cwd, stepDir });
+        if (stepDir) sink = rewriteInternalSink(sink, { cwd, stepDir });
 
         if (typeof sink === 'string' && sink.startsWith('$FILES:')) {
           const baseDir = sink.slice('$FILES:'.length).trim();
           const absBase = path.isAbsolute(baseDir) ? baseDir : path.join(cwd, baseDir);
+          const isRunArtifactSink = stepDir && isInsidePath(absBase, stepDir);
           const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
           let manifest;
           try { manifest = JSON.parse(rawJson); } catch (e) {
@@ -799,7 +1069,16 @@ export async function runPipeline(filePath, opts = {}) {
           }
           for (const entry of (Array.isArray(manifest) ? manifest : [])) {
             const absOut = path.resolve(absBase, entry.path);
-            assertSinkInsideRoot(absOut, cwd, step.agent, name);
+            if (isRunArtifactSink) {
+              assertRunArtifactWriteAllowed(absOut, absBase, step.agent, name);
+            } else {
+              assertWriteAllowed(absOut, {
+                root: cwd,
+                agentName: step.agent,
+                outputName: name,
+                policy: securityPolicy,
+              });
+            }
             await fs.mkdir(path.dirname(absOut), { recursive: true });
             await fs.writeFile(absOut, entry.content);
             fileWrites.push({
@@ -811,7 +1090,16 @@ export async function runPipeline(filePath, opts = {}) {
         } else if (typeof sink === 'string' && sink.startsWith('$FILE:')) {
           const outPath = sink.slice('$FILE:'.length).trim();
           const absOut = path.isAbsolute(outPath) ? outPath : path.resolve(cwd, outPath);
-          assertSinkInsideRoot(absOut, cwd, step.agent, name);
+          if (stepDir && isInsidePath(absOut, stepDir)) {
+            assertRunArtifactWriteAllowed(absOut, stepDir, step.agent, name);
+          } else {
+            assertWriteAllowed(absOut, {
+              root: cwd,
+              agentName: step.agent,
+              outputName: name,
+              policy: securityPolicy,
+            });
+          }
           await fs.mkdir(path.dirname(absOut), { recursive: true });
           await fs.writeFile(absOut, parsed[name]);
           fileWrites.push({
@@ -822,6 +1110,27 @@ export async function runPipeline(filePath, opts = {}) {
         }
       }
 
+      if (stepBeforeSnapshot) {
+        const stepAfterSnapshot = await snapshotProjectFiles(cwd);
+        const stepChanges = detectSnapshotChanges(stepBeforeSnapshot, stepAfterSnapshot, cwd);
+        const violations = validatePostRunChanges({
+          changes: stepChanges,
+          securityPolicy,
+          step,
+          cwd,
+        });
+        await handlePostRunViolations({
+          violations,
+          step,
+          securityPolicy,
+          timeline,
+          timelineIndex,
+          shell,
+          cwd,
+        });
+        currentSnapshot = stepAfterSnapshot;
+      }
+
       const costInfo = result.metadata.costUsd ? ` · $${result.metadata.costUsd.toFixed(4)}` : '';
       const turnInfo = result.metadata.turns ? ` · ${result.metadata.turns}t` : '';
       timeline.setDone(timelineIndex, `${elapsed}s${turnInfo}${costInfo}`);
@@ -830,6 +1139,7 @@ export async function runPipeline(filePath, opts = {}) {
         agent: step.agent,
         provider,
         model: model || '—',
+        securityProfile: securityPolicy.profile,
         permissionMode: permissionMode || '—',
         status: 'done',
         seconds: elapsedSeconds,
@@ -837,15 +1147,30 @@ export async function runPipeline(filePath, opts = {}) {
         cost: Number(result.metadata.costUsd || 0),
       });
     }
+  } catch (err) {
+    runError = err;
   } finally {
     timeline.end();
     if (shell) shell.exitPipelineMode();
   }
 
-  const detectedDeliverables = dryRun ? [] : detectSnapshotChanges(beforeSnapshot, await snapshotProjectFiles(cwd), cwd);
+  const finalSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
+  const detectedDeliverables = dryRun ? [] : detectSnapshotChanges(beforeSnapshot, finalSnapshot, cwd);
+  currentSnapshot = finalSnapshot || currentSnapshot;
+  const runStatus = runError ? 'failed' : (dryRun ? 'dry-run' : 'done');
 
   if (runDir) {
-    await writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables });
+    await writeRunManifest({
+      runDir,
+      runId,
+      pipeline,
+      cwd,
+      stats,
+      fileWrites,
+      detectedDeliverables,
+      status: runStatus,
+      error: runError,
+    });
     const latest = path.join(cwd, '.singleton', 'runs', 'latest');
     try { await fs.unlink(latest); } catch { /* missing is fine */ }
     try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical */ }
@@ -865,6 +1190,17 @@ export async function runPipeline(filePath, opts = {}) {
     ? (t) => shell.log(t)
     : (t) => console.log(stripBlessedTags(t));
 
-  for (const line of renderRunSummary({ stats, fileWrites: combinedWrites.map((f) => f.relPath), dryRun, runDir, cwd })) out(line);
+  for (const line of renderRunSummary({
+    stats,
+    fileWrites: combinedWrites.map((f) => f.relPath),
+    dryRun,
+    runDir,
+    cwd,
+    runStatus,
+  })) out(line);
+  if (runError) {
+    out(`{${C.salmon}-fg}✕ pipeline failed{/}`);
+    throw runError;
+  }
   out(dryRun ? `{${C.mint}-fg}✓ dry-run complete{/}` : `{${C.mint}-fg}✓ pipeline complete{/}`);
 }

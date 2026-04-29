@@ -5,6 +5,7 @@ import { createShell, C } from '../shell.js';
 import { scanAgents } from '../scanner.js';
 import { runPipeline } from '../executor.js';
 import { newAgentShellCommand } from './new.js';
+import { loadProjectSecurityConfig } from '../security/policy.js';
 
 const PIPELINES_DIRS = ['.singleton/pipelines'];
 
@@ -110,6 +111,12 @@ function replaceCurrentToken(buffer, replacement) {
 
 function matchesPrefix(value, prefix) {
   return value.toLowerCase().startsWith(prefix.toLowerCase());
+}
+
+function matchesCommitExclude(relPath, pattern) {
+  const rel = String(relPath || '').replaceAll('\\', '/').replace(/^\/+/, '');
+  const pat = String(pattern || '').replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  return pat && (rel === pat || rel.startsWith(`${pat}/`));
 }
 
 async function completeRepl(buffer, root) {
@@ -451,9 +458,28 @@ async function cmdCommitLast(root, shell) {
     return;
   }
 
-  const files = Array.isArray(manifest.deliverables) ? manifest.deliverables : [];
+  let securityConfig;
+  try {
+    securityConfig = await loadProjectSecurityConfig(root);
+  } catch (err) {
+    shell.log(`{${C.salmon}-fg}✕{/} ${err.message}`);
+    return;
+  }
+
+  const excluded = [];
+  const files = (Array.isArray(manifest.deliverables) ? manifest.deliverables : []).filter((file) => {
+    const excludedBy = securityConfig.commit.excludePaths.find((pattern) => matchesCommitExclude(file.path, pattern));
+    if (excludedBy) {
+      excluded.push({ file, excludedBy });
+      return false;
+    }
+    return true;
+  });
   if (files.length === 0) {
     shell.log(`{${C.peach}-fg}!{/} The last run produced no deliverables to commit.`);
+    if (excluded.length) {
+      shell.log(`{${C.dimV}-fg}All deliverables were excluded by .singleton/security.json commit rules.{/}`);
+    }
     return;
   }
 
@@ -464,10 +490,26 @@ async function cmdCommitLast(root, shell) {
     return;
   }
 
-  shell.log(`{bold}Commit last{/}  {${C.dimV}-fg}${manifest.pipeline || 'unknown pipeline'}{/}`);
+  shell.log(`{bold}Commit last preview{/}  {${C.dimV}-fg}${manifest.pipeline || 'unknown pipeline'}{/}`);
   shell.log('');
+  shell.log(`{${C.blue}-fg}Files to stage{/}`);
   for (const file of files) shell.log(`  {${C.dimV}-fg}·{/} ${file.path}`);
+  if (excluded.length) {
+    shell.log('');
+    shell.log(`{${C.peach}-fg}Excluded by security config{/}`);
+    for (const { file, excludedBy } of excluded) shell.log(`  {${C.dimV}-fg}·{/} ${file.path} {${C.dimV}-fg}(${excludedBy}){/}`);
+  }
   shell.log('');
+  shell.log(`{${C.dimV}-fg}.singleton artifacts are not committed by /commit-last.{/}`);
+  shell.log('');
+
+  if (securityConfig.commit.requireConfirmation) {
+    const confirmation = (await shell.prompt('Stage and commit these files? (y/N)')).trim().toLowerCase();
+    if (confirmation !== 'y' && confirmation !== 'yes') {
+      shell.log(`{${C.peach}-fg}!{/} Commit cancelled.`);
+      return;
+    }
+  }
 
   const defaultMessage = `Update files from ${manifest.pipeline || 'last pipeline'}`;
   const message = (await shell.prompt(`Commit message (default: ${defaultMessage})`)).trim() || defaultMessage;
