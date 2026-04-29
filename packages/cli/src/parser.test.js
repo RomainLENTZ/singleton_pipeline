@@ -13,6 +13,9 @@ const VALID_AGENT = `# My Agent
 - **provider**: claude
 - **model**: claude-sonnet-4-6
 - **permission_mode**: bypassPermissions
+- **security_profile**: restricted-write
+- **allowed_paths**: src, tests
+- **blocked_paths**: src/secrets
 
 ---
 
@@ -36,6 +39,9 @@ describe('parseAgentFile', () => {
     expect(a.provider).toBe('claude');
     expect(a.model).toBe('claude-sonnet-4-6');
     expect(a.permission_mode).toBe('bypassPermissions');
+    expect(a.security_profile).toBe('restricted-write');
+    expect(a.allowed_paths).toEqual(['src', 'tests']);
+    expect(a.blocked_paths).toEqual(['src/secrets']);
   });
 
   it('extracts the prompt body', () => {

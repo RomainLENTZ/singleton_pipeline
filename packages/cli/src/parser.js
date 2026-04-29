@@ -3,7 +3,7 @@ const PROMPT_HEADER = /^##\s+(Prompt|System|Instructions)\s*$/m;
 const HR = /^---\s*$/m;
 const KV_LINE = /^\s*-\s+\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$/;
 const REQUIRED = ['id', 'description', 'inputs', 'outputs'];
-const LIST_KEYS = new Set(['inputs', 'outputs', 'tags']);
+const LIST_KEYS = new Set(['inputs', 'outputs', 'tags', 'allowed_paths', 'blocked_paths']);
 
 export function parseAgentFileDetailed(content, file) {
   // Strip YAML frontmatter if present
@@ -60,6 +60,9 @@ export function parseAgentFileDetailed(content, file) {
     provider: config.provider,
     model: config.model,
     permission_mode: config.permission_mode,
+    security_profile: config.security_profile,
+    allowed_paths: config.allowed_paths || [],
+    blocked_paths: config.blocked_paths || [],
     estimated_tokens: config.estimated_tokens ? Number(config.estimated_tokens) : undefined,
     file,
     prompt
