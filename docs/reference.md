@@ -11,6 +11,7 @@ Use this file when you need exact behavior, node semantics, command details, or 
 - [Project workspace](#project-workspace)
 - [Agent model](#agent-model)
 - [Pipeline model](#pipeline-model)
+- [Security model](#security-model)
 - [Node types](#node-types)
 - [References](#references)
 - [Execution model](#execution-model)
@@ -95,6 +96,9 @@ Your prompt here.
 - `model`
 - `permission_mode`
 - `estimated_tokens`
+- `security_profile`
+- `allowed_paths`
+- `blocked_paths`
 
 ### Field semantics
 
@@ -107,6 +111,9 @@ Your prompt here.
 - `model` — provider-specific model name
 - `permission_mode` — applies to Claude only, ignored for Codex runs
 - `estimated_tokens` — optional metadata for planning
+- `security_profile` — Singleton write policy profile
+- `allowed_paths` — comma-separated write allowlist used by `restricted-write`
+- `blocked_paths` — comma-separated additional write blocklist
 
 ### Provider resolution
 
@@ -128,7 +135,215 @@ Permission mode resolution (Claude only):
 2. `agent.permission_mode`
 3. no explicit permission mode
 
+Security policy resolution:
+
+1. `step.security_profile`
+2. `agent.security_profile`
+3. `.singleton/security.json` `default_profile`
+4. fallback to `workspace-write`
+
+Path policy fields are resolved the same way:
+
+1. step-level `allowed_paths` / `blocked_paths`
+2. agent-level `allowed_paths` / `blocked_paths`
+3. `.singleton/security.json` `allowed_paths` / `blocked_paths`
+4. default built-in protections
+
 If `step.provider` overrides `agent.provider`, the step value wins silently — the agent's preference is treated as a default, not a constraint.
+
+## Security model
+
+Singleton has its own project-root policy layer. It is separate from provider permissions.
+
+- **Policy** in the run recap means Singleton's policy for the step.
+- `permission_mode` is provider-specific. Today it mainly matters for Claude, for example `bypassPermissions`.
+- A step can therefore show `restricted-write · perm:bypassPermissions`: Claude is allowed to use write tools, but Singleton still validates and monitors the allowed paths.
+
+### Security profiles
+
+Supported profiles:
+
+- `read-only` — the step may read files and produce pipeline outputs, but it must not modify project files.
+- `workspace-write` — the step may write project files, except protected or blocked paths.
+- `restricted-write` — the step may write only inside `allowed_paths`.
+- `dangerous` — disables built-in blocked-path checks, but still forbids writes outside the project root.
+
+Built-in protected paths:
+
+- `.git`
+- `node_modules`
+- `.env`
+- `.env.*`
+- `.ssh`
+
+Local tooling directories such as `.idea` and `.vscode` are ignored by post-run snapshots to avoid IDE noise, but they should still be blocked or excluded through project security config.
+
+### Project security config
+
+A project can define `.singleton/security.json`.
+
+Example:
+
+```json
+{
+  "default_profile": "workspace-write",
+  "blocked_paths": [
+    ".env",
+    ".env.*",
+    ".git",
+    ".idea",
+    ".vscode",
+    "dist",
+    "node_modules"
+  ],
+  "commit": {
+    "exclude_paths": [
+      ".singleton",
+      ".idea",
+      ".vscode",
+      "dist",
+      "node_modules"
+    ],
+    "require_confirmation": true
+  }
+}
+```
+
+Resolution order:
+
+1. step-level fields
+2. agent-level fields
+3. `.singleton/security.json`
+4. Singleton defaults
+
+### Step-level policy
+
+Pipeline steps can override the agent or project defaults.
+
+```json
+{
+  "agent": "fix-executor",
+  "agent_file": ".singleton/agents/fix-executor.md",
+  "security_profile": "restricted-write",
+  "allowed_paths": [
+    "src",
+    "vite.config.ts",
+    "CLAUDE.md"
+  ],
+  "inputs": {
+    "plan": "$PIPE:planner.plan"
+  },
+  "outputs": {
+    "execution_report": "$FILE:.singleton/output/execution.md"
+  }
+}
+```
+
+`allowed_paths` accepts both files and directories.
+
+```json
+{
+  "allowed_paths": ["src"]
+}
+```
+
+This allows writes to `src/App.vue`, `src/styles/main.scss`, `src/components/Button.vue`, etc.
+
+```json
+{
+  "allowed_paths": ["src/securitySmoke.ts"]
+}
+```
+
+This allows only that exact file.
+
+### Agent prompt injection
+
+Singleton injects the resolved policy into each step prompt.
+
+Example:
+
+```txt
+<security_policy>
+security_profile: restricted-write
+allowed_paths:
+- src/securitySmoke.ts
+blocked_paths:
+- .git
+- node_modules
+- .env
+
+Rules:
+- You may modify project files only inside allowed_paths.
+- If the requested change requires files outside allowed_paths, stop and explain it in your output.
+- Internal run artifacts are handled by Singleton; do not write into .singleton manually.
+</security_policy>
+```
+
+This reduces accidental violations, but it is not trusted as the only enforcement layer.
+
+### Enforcement layers
+
+Singleton checks security in three places:
+
+- **Preflight**: validates unsafe sinks, unknown profiles, missing `allowed_paths` for `restricted-write`, and provider permissions before calling an LLM CLI.
+- **Write-time**: validates `$FILE` and `$FILES` writes immediately before Singleton writes them.
+- **Post-run validation**: snapshots the project before and after each step, detects real project changes, and checks them against the step policy.
+
+This matters because provider CLIs can edit files directly through their own tools. Post-run validation detects those direct edits even if they did not go through `$FILE` or `$FILES`.
+
+### Security violations
+
+In non-interactive CLI mode, a post-run violation fails the pipeline.
+
+In the REPL/TUI, Singleton pauses:
+
+```txt
+Security violation: continue, stop, or diff? (c/s/d)
+```
+
+Actions:
+
+- `c` / `continue` — continue the pipeline.
+- `s` / `stop` / Enter — stop the pipeline.
+- `d` / `diff` — print a bounded `git diff` preview for the violated files.
+
+Diff previews are intentionally limited to avoid flooding the terminal.
+
+### Run status on failure
+
+Real runs write a manifest even when the pipeline fails after it has started.
+
+Failed manifests include:
+
+- `status: "failed"`
+- `error.message`
+- completed step stats
+- intermediates already produced
+- deliverables detected before failure
+
+`.singleton/runs/latest` still points to the failed run so it can be inspected.
+
+### Recommended pattern
+
+Use strict policies for multi-step pipelines:
+
+- scouts, auditors, planners, and reviewers: `read-only`
+- code writers: `restricted-write` with the smallest reasonable `allowed_paths`
+- broad project refactors: `restricted-write` with a directory like `src`
+- avoid `dangerous` except for local experiments
+
+For Claude writers that need file tools, set both layers explicitly:
+
+```json
+{
+  "security_profile": "restricted-write",
+  "allowed_paths": ["src"],
+  "permission_mode": "bypassPermissions"
+}
+```
+
+This lets Claude write, while Singleton still constrains and validates the result.
 
 ## Pipeline model
 
@@ -282,10 +497,11 @@ Each run goes through these phases:
 3. collect runtime inputs
 4. run preflight checks
 5. execute each step in order
-6. write deliverables and intermediates
-7. detect modified project files
-8. write a run manifest
-9. print a run summary
+6. write step intermediates and declared deliverables
+7. validate post-step project changes against the step policy
+8. detect final deliverables
+9. write a run manifest, including failed runs
+10. print a run summary
 
 ### Preflight
 
@@ -299,6 +515,8 @@ It validates:
 - agent parsing
 - provider validity
 - provider CLI availability
+- security profile validity
+- project security config
 - `$INPUT` references
 - `$PIPE` references
 - `$FILE` input resolution
@@ -350,28 +568,35 @@ A run manifest looks like this:
 
 ```json
 {
+  "runId": "20260429-162613-codex-security-code-edit-smoke",
   "pipeline": "contact-view-polish-mixed",
-  "project_root": "/abs/path/to/project",
-  "created_at": "2026-04-28T14:32:11.000Z",
+  "projectRoot": "/abs/path/to/project",
+  "createdAt": "2026-04-28T14:32:11.000Z",
+  "status": "done",
+  "error": null,
   "deliverables": [
-    { "path": "src/contact-view.js", "size": 2048 }
+    { "path": "src/contact-view.js", "absPath": "/abs/path/to/project/src/contact-view.js" }
   ],
   "intermediates": [
-    { "path": ".singleton/runs/2026-04-28T14-32-11/scout.md", "size": 512 }
+    { "path": ".singleton/runs/<run-id>/01-scout/scout.md", "absPath": "/abs/path/to/project/.singleton/runs/<run-id>/01-scout/scout.md" }
   ],
-  "steps": [
+  "stats": [
     {
       "agent": "scout",
       "provider": "claude",
       "model": "claude-sonnet-4-6",
-      "status": "ok",
-      "duration_ms": 8420,
+      "securityProfile": "read-only",
+      "permissionMode": "—",
+      "status": "done",
+      "seconds": 8.4,
       "turns": 3,
-      "cost_usd": 0.012
+      "cost": 0.012
     }
   ]
 }
 ```
+
+If a run fails after starting, `status` is `failed`, `error.message` is populated, and partial artifacts remain listed.
 
 ## Multi-provider model
 
@@ -491,7 +716,10 @@ Shell features:
 
 - keeps real project deliverables
 - excludes `.singleton` artifacts
+- excludes paths configured in `.singleton/security.json` `commit.exclude_paths`
 - includes files modified directly during the run
+- previews files before staging
+- asks for confirmation unless disabled by project security config
 - prompts for a commit message
 - runs `git add` on deliverables only
 - creates a Git commit

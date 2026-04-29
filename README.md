@@ -2,7 +2,7 @@
 
 Build multi-agent pipelines for your codebase, visually.
 
-You probably already chain Claude/Codex agents by hand a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
+You probably already chain Claude/Codex agents by hand: a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
 
 - agents are plain Markdown files
 - pipelines are JSON, stored in your project under `.singleton/`
@@ -10,6 +10,19 @@ You probably already chain Claude/Codex agents by hand a scout reads the repo, a
 - nothing leaves your machine Singleton drives the local `claude` and `codex` CLIs
 
 > Status: early beta. The pipeline format may still evolve.
+
+## Latest Beta Update
+
+This beta adds a first serious security layer around local LLM execution.
+
+- `Policy` is now visible during runs and in the final recap.
+- Agents can run as `read-only`, `workspace-write`, `restricted-write`, or `dangerous`.
+- Pipelines can restrict writers to exact files or folders with `allowed_paths`.
+- `.singleton/security.json` defines project-wide defaults, blocked paths, and commit exclusions.
+- Singleton validates writes before execution, at write-time, and after each step by checking real project changes.
+- Security violations pause the REPL with `continue`, `stop`, and `diff` options.
+- Run manifests are written even when a pipeline fails, so partial runs remain inspectable.
+- `/commit-last` previews files, applies security exclusions, and asks for confirmation.
 
 ## Install
 
@@ -60,7 +73,7 @@ Steps wire to each other through four references:
 | `$PIPE:<agent>.<out>`  | in        | grab the output of a previous step            |
 | `$FILES:<dir>`         | out       | let an agent emit several files at once       |
 
-Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass validates inputs, files, providers and references before any LLM is called. Each run lands in `.singleton/runs/<id>/` with a manifest; `/commit-last` stages only the real project deliverables (never `.singleton` itself).
+Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass validates inputs, files, providers, references, and security policies before any LLM is called. Each run lands in `.singleton/runs/<id>/` with a manifest, even when the run fails; `/commit-last` stages only approved project deliverables (never `.singleton` itself).
 
 Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
 

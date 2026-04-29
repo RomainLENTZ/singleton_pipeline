@@ -20,3 +20,6 @@ build/
 !README.*
 !AGENTS.md
 !AGENTS.override.md
+/AGENTS.md
+!docs/
+!docs/**/*.md
