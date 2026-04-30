@@ -746,7 +746,7 @@ Cycles are rejected at save time.
 
 ## Full pipeline example
 
-Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For an executable example, see `examples/mixed-claude-codex/`.
+Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For executable examples, see `examples/claude-code-review/`, `examples/codex-code-review/`, `examples/mixed-code-review/`, and `examples/frontend-audit/`.
 
 A two-step pipeline: a generator writes code from a spec, a reviewer reads that code and emits a report.
 
@@ -794,7 +794,7 @@ What this pipeline does at runtime:
 5. writes the review to `.singleton/runs/latest/review.md` (an intermediate)
 6. emits a manifest distinguishing the deliverable from the intermediate
 
-See `examples/mixed-claude-codex/` for an end-to-end example using both Claude and Codex.
+See `examples/mixed-code-review/` for an end-to-end example using both Claude and Codex.
 
 ## Troubleshooting
 

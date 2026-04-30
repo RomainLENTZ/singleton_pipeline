@@ -2,11 +2,6 @@ node_modules/
 .singleton/
 examples/
 !examples/
-examples/*
-!examples/mixed-claude-codex/
-!examples/mixed-claude-codex/**
-examples/mixed-claude-codex/.singleton/agents.json
-examples/mixed-claude-codex/.singleton/runs/
 pipelines/
 .claude/
 .vscode/
@@ -23,3 +18,14 @@ build/
 /AGENTS.md
 !docs/
 !docs/**/*.md
+
+# Official examples are part of the repository, including Markdown agents and
+# project-local pipeline files. Keep generated caches and runs out.
+!examples/
+!examples/**
+examples/**/.singleton/agents.json
+examples/**/.singleton/runs/
+examples/**/.singleton/runs/**
+examples/**/node_modules/
+examples/**/dist/
+examples/**/build/

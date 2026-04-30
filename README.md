@@ -35,10 +35,10 @@ Requirements: Node 20+, plus `claude` and/or `codex` available in your `$PATH` w
 
 ## Quickstart
 
-Run the bundled example end-to-end (uses both Claude and Codex):
+Run the bundled mixed-provider example end-to-end (uses Claude for scouting/review and Codex for implementation):
 
 ```bash
-singleton run --pipeline examples/mixed-claude-codex/.singleton/pipelines/contact-view-polish-mixed.json
+singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json
 ```
 
 Add `--dry-run` to validate the pipeline without calling any LLM.
@@ -76,6 +76,25 @@ Steps wire to each other through four references:
 Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass validates inputs, files, providers, references, and security policies before any LLM is called. Each run lands in `.singleton/runs/<id>/` with a manifest, even when the run fails; `/commit-last` stages only approved project deliverables (never `.singleton` itself).
 
 Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
+
+## Examples
+
+The repository ships with runnable example projects:
+
+| Example | Providers | Purpose |
+| ------- | --------- | ------- |
+| `examples/claude-code-review` | Claude | Text spec -> scout -> code writer -> reviewer |
+| `examples/codex-code-review` | Codex | Same code workflow, using Codex only |
+| `examples/mixed-code-review` | Claude + Codex | Claude scouts/reviews, Codex edits code |
+| `examples/frontend-audit` | Claude | Read-only frontend audit pipeline |
+
+The code-review examples are portable templates: they do not ship a toy source file. When you run them for real, provide a spec, a target file path, and the same file as readable context from your own project.
+
+Validate any example without calling an LLM:
+
+```bash
+singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json --dry-run
+```
 
 ## Project layout
 

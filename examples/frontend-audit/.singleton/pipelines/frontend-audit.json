@@ -1,0 +1,63 @@
+{
+  "name": "frontend-audit",
+  "nodes": [
+    {
+      "id": "input-spec",
+      "type": "input",
+      "position": { "x": 60, "y": 80 },
+      "data": {
+        "subtype": "file",
+        "label": "Audit spec",
+        "value": ".singleton/specs/frontend-audit.md"
+      }
+    },
+    {
+      "id": "input-source",
+      "type": "input",
+      "position": { "x": 60, "y": 220 },
+      "data": {
+        "subtype": "file",
+        "label": "Source files",
+        "value": "src/**/*.{vue,scss,ts}"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "agent": "frontend-convention-scout",
+      "agent_file": ".singleton/agents/frontend-convention-scout.md",
+      "security_profile": "read-only",
+      "inputs": {
+        "audit_spec": "$INPUT:input-spec",
+        "source_files": "$INPUT:input-source"
+      },
+      "outputs": {
+        "audit_context": "$FILE:.singleton/output/frontend-audit-context.md"
+      }
+    },
+    {
+      "agent": "frontend-architecture-reviewer",
+      "agent_file": ".singleton/agents/frontend-architecture-reviewer.md",
+      "security_profile": "read-only",
+      "inputs": {
+        "audit_spec": "$INPUT:input-spec",
+        "audit_context": "$PIPE:frontend-convention-scout.audit_context"
+      },
+      "outputs": {
+        "architecture_review": "$FILE:.singleton/output/frontend-architecture-review.md"
+      }
+    },
+    {
+      "agent": "frontend-audit-plan-writer",
+      "agent_file": ".singleton/agents/frontend-audit-plan-writer.md",
+      "security_profile": "read-only",
+      "inputs": {
+        "audit_context": "$PIPE:frontend-convention-scout.audit_context",
+        "architecture_review": "$PIPE:frontend-architecture-reviewer.architecture_review"
+      },
+      "outputs": {
+        "remediation_plan": "$FILE:.singleton/output/frontend-remediation-plan.md"
+      }
+    }
+  ]
+}

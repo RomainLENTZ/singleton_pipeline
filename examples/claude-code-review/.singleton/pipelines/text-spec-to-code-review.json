@@ -1,0 +1,78 @@
+{
+  "name": "text-spec-to-code-review",
+  "nodes": [
+    {
+      "id": "input-spec",
+      "type": "input",
+      "position": { "x": 60, "y": 80 },
+      "data": {
+        "subtype": "text",
+        "label": "Spec",
+        "value": "Describe the code change you want to apply."
+      }
+    },
+    {
+      "id": "input-target-path",
+      "type": "input",
+      "position": { "x": 60, "y": 220 },
+      "data": {
+        "subtype": "text",
+        "label": "Target file path",
+        "value": "src/path/to-file.ts"
+      }
+    },
+    {
+      "id": "input-target-file",
+      "type": "input",
+      "position": { "x": 60, "y": 360 },
+      "data": {
+        "subtype": "file",
+        "label": "Target file content",
+        "value": ""
+      }
+    }
+  ],
+  "steps": [
+    {
+      "agent": "claude-code-scout",
+      "agent_file": ".singleton/agents/claude-code-scout.md",
+      "security_profile": "read-only",
+      "inputs": {
+        "spec": "$INPUT:input-spec",
+        "target_file": "$INPUT:input-target-file",
+        "target_path": "$INPUT:input-target-path"
+      },
+      "outputs": {
+        "scout_report": "$FILE:.singleton/output/scout-report.md"
+      }
+    },
+    {
+      "agent": "claude-code-writer",
+      "agent_file": ".singleton/agents/claude-code-writer.md",
+      "security_profile": "restricted-write",
+      "permission_mode": "bypassPermissions",
+      "allowed_paths": ["src/"],
+      "inputs": {
+        "spec": "$INPUT:input-spec",
+        "scout_report": "$PIPE:claude-code-scout.scout_report",
+        "target_path": "$INPUT:input-target-path"
+      },
+      "outputs": {
+        "execution_report": "$FILE:.singleton/output/execution-report.md"
+      }
+    },
+    {
+      "agent": "claude-code-reviewer",
+      "agent_file": ".singleton/agents/claude-code-reviewer.md",
+      "security_profile": "read-only",
+      "inputs": {
+        "spec": "$INPUT:input-spec",
+        "execution_report": "$PIPE:claude-code-writer.execution_report",
+        "target_path": "$INPUT:input-target-path"
+      },
+      "outputs": {
+        "review_report": "$FILE:.singleton/output/review-report.md"
+      }
+    }
+  ]
+}
