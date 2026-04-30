@@ -25,7 +25,7 @@ vi.mock('./runners/index.js', () => ({
         await fsMock.writeFile(pathMock.join(cwd, '.idea', 'workspace.xml'), '<workspace />\n');
       }
       return {
-        text: 'generated text',
+        text: userPrompt.includes('DEBUG_OVERRIDE') ? 'debug override seen' : 'generated text',
         metadata: {},
       };
     },
@@ -290,5 +290,63 @@ describe('runPipeline preflight', () => {
       agent: 'echo',
       status: 'failed',
     });
+  });
+
+  it('can skip a step in debug mode without calling the runner', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-skip', {
+      name: 'debug-skip',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: '$FILE:inputs/sample.md' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => 'skip',
+    })).resolves.toBeUndefined();
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.pipeline).toBe('debug-skip');
+    expect(manifest.stats.at(-1)).toMatchObject({
+      agent: 'echo',
+      status: 'skipped',
+    });
+    await expect(fs.access(path.join(latestRun, '01-echo', 'result.md'))).rejects.toThrow();
+  });
+
+  it('can override resolved inputs in debug mode for the current run', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-input-override', {
+      name: 'debug-input-override',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: 'original input' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => ({
+        action: 'continue',
+        inputs: { text: 'DEBUG_OVERRIDE' },
+      }),
+    })).resolves.toBeUndefined();
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'result.md'), 'utf8');
+    expect(artifact).toBe('debug override seen');
   });
 });

@@ -75,8 +75,9 @@ program
   .requiredOption('--pipeline <file>', 'Pipeline JSON file')
   .option('--dry-run', 'Skip API calls, just show resolved plan')
   .option('--verbose', 'Show prompts and outputs in the right panel')
+  .option('--debug', 'Pause before each step for manual review')
   .action(async (opts) => {
-    await runPipeline(opts.pipeline, { dryRun: opts.dryRun, verbose: opts.verbose });
+    await runPipeline(opts.pipeline, { dryRun: opts.dryRun, verbose: opts.verbose, debug: opts.debug });
   });
 
 program

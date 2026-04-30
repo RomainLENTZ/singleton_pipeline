@@ -54,6 +54,7 @@ export function createTimeline(stepNames, widgets = null) {
   function dot(status, frame = 0) {
     if (status === 'done')    return `{${C.mint}-fg}●{/}`;
     if (status === 'running') return `{#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}`;
+    if (status === 'paused')  return `{${C.peach}-fg}●{/}`;
     if (status === 'error')   return `{${C.salmon}-fg}●{/}`;
     return `{${C.ghost}-fg}○{/}`;
   }
@@ -78,8 +79,15 @@ export function createTimeline(stepNames, widgets = null) {
     const currentMeta = runningIdx >= 0 && meta[runningIdx]
       ? `  {${C.ghost}-fg}${meta[runningIdx]}{/}`
       : '';
+    const isPaused = runningIdx >= 0 && statuses[runningIdx] === 'paused';
+    const activityLabel = isPaused
+      ? `{${C.peach}-fg}{bold}Paused{/}`
+      : `{bold}Running{/}`;
+    const activityIcon = isPaused
+      ? `{${C.peach}-fg}●{/}`
+      : `{#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}`;
     const runningLabel = runningIdx >= 0
-      ? `{bold}Running{/}  {#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}  ${shimmerName(stepNames[runningIdx], frame)}  {${C.ghost}-fg}step ${runningIdx + 1}/${N}{/}${currentMeta}`
+      ? `${activityLabel}  ${activityIcon}  ${shimmerName(stepNames[runningIdx], frame)}  {${C.ghost}-fg}step ${runningIdx + 1}/${N}{/}${currentMeta}`
       : `{bold}Running:{/} {${C.dimV}-fg}idle{/}`;
     const statusLines = [
       '',
@@ -104,6 +112,14 @@ export function createTimeline(stepNames, widgets = null) {
       meta[i] = info;
       renderTimeline();
       spinnerInterval = setInterval(() => { spinnerFrame++; renderTimeline(spinnerFrame); }, 80);
+    },
+
+    setPaused(i, info = '') {
+      if (spinnerInterval) { clearInterval(spinnerInterval); spinnerInterval = null; }
+      runningIdx = i;
+      statuses[i] = 'paused';
+      meta[i] = info;
+      renderTimeline();
     },
 
     setDone(i, info = '') {

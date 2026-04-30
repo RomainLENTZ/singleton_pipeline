@@ -261,6 +261,7 @@ function createSilentTimeline() {
     log() {},
     logMuted() {},
     setRunning() {},
+    setPaused() {},
     setDone() {},
     setError() {},
     end() {},
@@ -274,6 +275,183 @@ function formatStepRuntimeMeta({ provider, model, permissionMode, securityProfil
   if (securityProfile) parts.push(`security:${securityProfile}`);
   if (permissionMode) parts.push(`perm:${permissionMode}`);
   return parts.join(' · ');
+}
+
+function previewValue(value, max = 140) {
+  const compact = String(value || '').replace(/\s+/g, ' ').trim();
+  if (compact.length <= max) return compact || '—';
+  return `${compact.slice(0, max - 1)}…`;
+}
+
+const debugToken = {
+  key: (value) => `{${C.blue}-fg}{bold}${value}:{/}`,
+  identity: (value) => `{${C.mint}-fg}${value || '—'}{/}`,
+  text: (value) => `{#FFFFFF-fg}${value || '—'}{/}`,
+  path: (value) => `{${C.blue}-fg}${value || '—'}{/}`,
+  policy: (value) => `{${C.peach}-fg}${value || '—'}{/}`,
+  muted: (value) => `{${C.ghost}-fg}${value || '—'}{/}`,
+};
+
+function looksLikePath(value) {
+  const text = String(value || '').trim();
+  return /^\.{0,2}\//.test(text) || /^[\w.-]+\/[\w./-]+$/.test(text) || /\.[a-z0-9]{1,8}$/i.test(text);
+}
+
+function debugValue(value, kind = 'text') {
+  if (!value || value === '—') return debugToken.muted('—');
+  if (kind === 'identity') return debugToken.identity(value);
+  if (kind === 'path') return debugToken.path(value);
+  if (kind === 'policy') return debugToken.policy(value);
+  return debugToken.text(value);
+}
+
+function debugLine(label, value, kind = 'text') {
+  return `${debugToken.key(label)} ${debugValue(value, kind)}`;
+}
+
+function logDebugInputs(resolvedInputs, timeline) {
+  const entries = Object.entries(resolvedInputs);
+  if (entries.length) {
+    timeline.logMuted(debugToken.key('inputs'));
+    for (const [name, value] of entries) {
+      const preview = previewValue(value);
+      timeline.logMuted(
+        `  ${debugToken.muted('·')} ${debugToken.key(name)} ` +
+        `${debugValue(preview, looksLikePath(preview) ? 'path' : 'text')}`
+      );
+    }
+  } else {
+    timeline.logMuted(`${debugToken.key('inputs')} ${debugToken.muted('none')}`);
+  }
+}
+
+function logDebugPromptPreview({ systemPrompt, userMessage, timeline }) {
+  timeline.log(`{${C.violet}-fg}{bold}── debug prompt preview ──{/}`);
+  timeline.logMuted(debugToken.key('system prompt'));
+  for (const line of systemPrompt.split('\n')) {
+    timeline.logMuted(`  ${debugToken.text(line || ' ')}`);
+  }
+  timeline.logMuted(debugToken.key('user message'));
+  for (const line of userMessage.split('\n')) {
+    timeline.logMuted(`  ${debugToken.text(line || ' ')}`);
+  }
+}
+
+async function editDebugInputs({ resolvedInputs, shell, timeline }) {
+  const names = Object.keys(resolvedInputs);
+  if (names.length === 0) {
+    timeline.logMuted('No inputs to edit.');
+    return resolvedInputs;
+  }
+
+  timeline.log(`{${C.violet}-fg}{bold}── debug edit inputs ──{/}`);
+  timeline.logMuted(`Type an input name to override it. Empty input name returns to debug review.`);
+  const nextInputs = { ...resolvedInputs };
+
+  while (true) {
+    const rawName = shell
+      ? await shell.prompt(`Input to edit (${names.join(', ')})`)
+      : await input({ message: `Input to edit (${names.join(', ')})` });
+    const name = String(rawName || '').trim();
+    if (!name) return nextInputs;
+    if (!Object.hasOwn(nextInputs, name)) {
+      timeline.logMuted(`Unknown input "${name}".`);
+      continue;
+    }
+
+    const current = previewValue(nextInputs[name], 220);
+    timeline.logMuted(`${debugToken.key(name)} current: ${debugValue(current, looksLikePath(current) ? 'path' : 'text')}`);
+    const value = shell
+      ? await shell.prompt(`New value for ${name}`)
+      : await input({ message: `New value for ${name}`, default: String(nextInputs[name] || '') });
+    nextInputs[name] = String(value || '');
+    timeline.logMuted(`${debugToken.key(name)} updated.`);
+  }
+}
+
+async function promptDebugStepDecision({
+  step,
+  stepNumber,
+  totalSteps,
+  provider,
+  model,
+  permissionMode,
+  securityPolicy,
+  resolvedInputs,
+  outputNames,
+  systemPrompt,
+  workspaceInfo,
+  timeline,
+  shell,
+  quiet,
+  decisionFn,
+}) {
+  const summary = {
+    agent: step.agent,
+    stepNumber,
+    totalSteps,
+    provider,
+    model,
+    permissionMode,
+    securityProfile: securityPolicy.profile,
+    inputs: Object.keys(resolvedInputs),
+    outputs: outputNames,
+    systemPrompt,
+    workspaceInfo,
+  };
+
+  if (decisionFn) {
+    const decision = await decisionFn(summary);
+    if (typeof decision === 'object' && decision) {
+      return {
+        action: String(decision.action || 'continue').trim().toLowerCase(),
+        inputs: decision.inputs && typeof decision.inputs === 'object' ? decision.inputs : resolvedInputs,
+      };
+    }
+    return {
+      action: String(decision || 'continue').trim().toLowerCase() || 'continue',
+      inputs: resolvedInputs,
+    };
+  }
+  if (quiet) return { action: 'continue', inputs: resolvedInputs };
+
+  let currentInputs = { ...resolvedInputs };
+
+  timeline.log(`{${C.violet}-fg}{bold}── debug step review ──{/}`);
+  timeline.logMuted(debugLine('step', `${stepNumber}/${totalSteps}`));
+  timeline.logMuted(debugLine('agent', step.agent, 'identity'));
+  timeline.logMuted(debugLine('provider', provider, 'identity'));
+  timeline.logMuted(debugLine('model', model || '—', 'identity'));
+  timeline.logMuted(debugLine('security', securityPolicy.profile, 'policy'));
+  timeline.logMuted(debugLine('permission', permissionMode || '—', 'policy'));
+  timeline.logMuted(
+    `${debugToken.key('outputs')} ${outputNames.length ? outputNames.map((name) => debugToken.identity(name)).join(` ${debugToken.muted('·')} `) : debugToken.muted('none')}`
+  );
+  logDebugInputs(currentInputs, timeline);
+
+  while (true) {
+    const raw = shell
+      ? await shell.prompt('Debug: continue, inspect, edit, skip, or abort? (c/i/e/s/a)')
+      : await input({ message: 'Debug: continue, inspect, edit, skip, or abort? (c/i/e/s/a)', default: 'c' });
+    const answer = String(raw || '').trim().toLowerCase();
+    if (!answer || answer === 'c' || answer === 'continue') return { action: 'continue', inputs: currentInputs };
+    if (answer === 's' || answer === 'skip') return { action: 'skip', inputs: currentInputs };
+    if (answer === 'a' || answer === 'abort' || answer === 'stop') return { action: 'abort', inputs: currentInputs };
+    if (answer === 'i' || answer === 'inspect') {
+      logDebugPromptPreview({
+        systemPrompt: summary.systemPrompt,
+        userMessage: buildUserMessage(currentInputs, outputNames, summary.workspaceInfo, securityPolicy),
+        timeline,
+      });
+      continue;
+    }
+    if (answer === 'e' || answer === 'edit') {
+      currentInputs = await editDebugInputs({ resolvedInputs: currentInputs, shell, timeline });
+      logDebugInputs(currentInputs, timeline);
+      continue;
+    }
+    timeline.logMuted('Choose c/continue, i/inspect, e/edit, s/skip, or a/abort.');
+  }
 }
 
 function formatSecurityHighlight({ label, provider, permissionMode, securityPolicy }) {
@@ -812,6 +990,7 @@ export async function runPipeline(filePath, opts = {}) {
   const cwd = resolveProjectRoot(pipelineDir);
   const dryRun  = !!opts.dryRun;
   const verbose = !!opts.verbose;
+  const debug   = !!opts.debug;
   const shell   = opts.shell || null;
   const quiet   = !!opts.quiet;
   const securityConfig = await loadProjectSecurityConfig(cwd);
@@ -830,10 +1009,12 @@ export async function runPipeline(filePath, opts = {}) {
     console.log(style.title(`\n▸ ${pipeline.name}`) + style.muted(`  (${pipeline.steps.length} steps)`));
     if (runInfo) console.log(style.muted(`  ${runInfo}`));
     if (dryRun) console.log(style.warn('  [dry-run] no CLI calls will be made'));
+    if (debug) console.log(style.warn('  [debug] pausing before each step'));
   } else if (shell) {
     shell.log(`{bold}▸ ${pipeline.name}{/}  {${C.dimV}-fg}(${pipeline.steps.length} steps){/}`);
     if (runInfo) shell.log(`  {${C.dimV}-fg}${runInfo}{/}`);
     if (dryRun) shell.log(`{yellow-fg}  [dry-run] no CLI calls will be made{/}`);
+    if (debug) shell.log(`{yellow-fg}  [debug] pausing before each step{/}`);
   }
 
   const inputDefs = (pipeline.nodes || [])
@@ -977,7 +1158,7 @@ export async function runPipeline(filePath, opts = {}) {
       const stepDir = runDir ? path.join(runDir, `${stepIndex}-${step.agent}`) : null;
       if (stepDir) await fs.mkdir(stepDir, { recursive: true });
 
-      const resolvedInputs = {};
+      let resolvedInputs = {};
       for (const [name, spec] of Object.entries(step.inputs || {})) {
         resolvedInputs[name] = await resolveInput(spec, { registry, cwd, inputValues, inputDefs });
       }
@@ -988,7 +1169,67 @@ export async function runPipeline(filePath, opts = {}) {
       const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
       const systemPrompt = agent.prompt || agent.description;
       const workspaceInfo = stepDir ? { projectRoot: cwd, stepDirRel: path.relative(cwd, stepDir) } : null;
+
+      if (debug) {
+        timeline.setPaused(timelineIndex, 'debug review');
+        const decision = await promptDebugStepDecision({
+          step,
+          stepNumber: i + 1,
+          totalSteps: pipeline.steps.length,
+          provider,
+          model,
+          permissionMode,
+          securityPolicy,
+          resolvedInputs,
+          outputNames,
+          systemPrompt,
+          workspaceInfo,
+          timeline,
+          shell,
+          quiet,
+          decisionFn: opts.debugDecision,
+        });
+
+        resolvedInputs = decision.inputs || resolvedInputs;
+
+        if (decision.action === 'skip') {
+          for (const name of outputNames) {
+            registry[`${step.agent}.${name}`] = `(debug-skipped:${step.agent}.${name})`;
+          }
+          timeline.setDone(timelineIndex, 'skipped by debug');
+          timeline.log(`↷ ${step.agent} — skipped by debug`);
+          stats.push({
+            agent: step.agent,
+            provider,
+            model: model || '—',
+            securityProfile: securityPolicy.profile,
+            permissionMode: permissionMode || '—',
+            status: 'skipped',
+            seconds: 0,
+            turns: 0,
+            cost: 0,
+          });
+          continue;
+        }
+
+        if (decision.action === 'abort') {
+          stats.push({
+            agent: step.agent,
+            provider,
+            model: model || '—',
+            securityProfile: securityPolicy.profile,
+            permissionMode: permissionMode || '—',
+            status: 'failed',
+            seconds: 0,
+            turns: 0,
+            cost: 0,
+          });
+          failStep(timeline, timelineIndex, 'aborted by debug', `Pipeline aborted before step "${step.agent}".`);
+        }
+      }
+
       const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPolicy);
+
       timeline.setRunning(
         timelineIndex,
         formatStepRuntimeMeta({

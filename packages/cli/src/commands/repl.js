@@ -16,6 +16,7 @@ const HELP = [
   `  {${C.violet}-fg}/run <name>{/}               run a pipeline`,
   `  {${C.violet}-fg}/run <name> --dry{/}         dry-run (plan without API calls)`,
   `  {${C.violet}-fg}/run <name> --verbose{/}     show prompts and outputs`,
+  `  {${C.violet}-fg}/run <name> --debug{/}       pause before each step`,
   `  {${C.blue}-fg}/scan{/}                     scan .md agents`,
   `  {${C.blue}-fg}/new{/}                      create a new agent`,
   `  {${C.blue}-fg}/serve{/}                    start the web server`,
@@ -42,6 +43,7 @@ const COMMANDS = [
 const RUN_FLAGS = [
   { label: '--dry', description: 'plan without API calls' },
   { label: '--verbose', description: 'show prompts and outputs' },
+  { label: '--debug', description: 'pause before each step' },
   { label: '-v', description: 'alias for --verbose' },
 ];
 
@@ -324,7 +326,8 @@ export async function replCommand(opts) {
 async function cmdRun(args, root, shell) {
   const dry     = args.includes('--dry');
   const verbose = args.includes('--verbose') || args.includes('-v');
-  const name    = args.filter((a) => !['--dry', '--verbose', '-v'].includes(a))[0];
+  const debug   = args.includes('--debug');
+  const name    = args.filter((a) => !['--dry', '--verbose', '--debug', '-v'].includes(a))[0];
 
   if (!name) {
     const pipelines = await listPipelines(root);
@@ -333,7 +336,7 @@ async function cmdRun(args, root, shell) {
       return;
     }
     shell.log(`{${C.dimV}-fg}  Pipelines: ${pipelines.join(', ')}{/}`);
-    shell.log(`{${C.dimV}-fg}  Usage: /run <name> [--dry]{/}`);
+    shell.log(`{${C.dimV}-fg}  Usage: /run <name> [--dry] [--verbose] [--debug]{/}`);
     return;
   }
 
@@ -345,7 +348,7 @@ async function cmdRun(args, root, shell) {
     return;
   }
 
-  await runPipeline(filePath, { dryRun: dry, verbose, shell });
+  await runPipeline(filePath, { dryRun: dry, verbose, debug, shell });
 }
 
 async function cmdLs(root, shell) {

@@ -272,7 +272,7 @@ export function createShell() {
       setTimeout(() => { screen.destroy(); process.exit(0); }, 200);
     }
 
-    if (pipelineMode && !promptMode) {
+    if (pipelineMode) {
       if (key.name === 'up') {
         pipelineLog.scroll(-1);
         screen.render();
