@@ -24,6 +24,12 @@ vi.mock('./runners/index.js', () => ({
         await fsMock.mkdir(pathMock.join(cwd, '.idea'), { recursive: true });
         await fsMock.writeFile(pathMock.join(cwd, '.idea', 'workspace.xml'), '<workspace />\n');
       }
+      if (userPrompt.includes('INVALID_FILES_JSON')) {
+        return {
+          text: 'not json',
+          metadata: {},
+        };
+      }
       return {
         text: userPrompt.includes('DEBUG_OVERRIDE') ? 'debug override seen' : 'generated text',
         metadata: {},
@@ -346,7 +352,77 @@ describe('runPipeline preflight', () => {
     })).resolves.toBeUndefined();
 
     const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    expect(path.basename(latestRun)).toMatch(/^DEBUG-/);
     const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'result.md'), 'utf8');
     expect(artifact).toBe('debug override seen');
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.debugEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        step: 'echo',
+        phase: 'pre-step',
+        action: 'continue',
+        editedInputs: ['text'],
+      }),
+      expect.objectContaining({
+        step: 'echo',
+        phase: 'post-step',
+        action: 'continue',
+      }),
+    ]));
+    expect(JSON.stringify(manifest.debugEvents)).not.toMatch(/Generate the requested code/);
+  });
+
+  it('can abort after a debug output review', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-output-abort', {
+      name: 'debug-output-abort',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: 'normal input' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => 'continue',
+      debugPostDecision: async () => 'abort',
+    })).rejects.toThrow(/output review/);
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.pipeline).toBe('debug-output-abort');
+    expect(manifest.status).toBe('failed');
+    expect(manifest.error.message).toMatch(/output review/);
+    expect(manifest.stats.at(-1)).toMatchObject({
+      agent: 'echo',
+      status: 'failed',
+    });
+  });
+
+  it('saves raw output when structured output parsing fails', async () => {
+    const file = await writePipeline(tmpRoot, 'raw-output-on-parse-failure', {
+      name: 'raw-output-on-parse-failure',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: 'INVALID_FILES_JSON' },
+          outputs: { result: '$FILES:.singleton/output/generated' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, { quiet: true })).rejects.toThrow(/invalid JSON/);
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const raw = await fs.readFile(path.join(latestRun, '01-echo', 'raw-output.md'), 'utf8');
+    expect(raw).toContain('Invalid $FILES JSON');
+    expect(raw).toContain('not json');
   });
 });

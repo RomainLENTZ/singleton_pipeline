@@ -1,4 +1,4 @@
-# Singleton Pipeline Builder (Beta)
+# Singleton Pipeline Builder (v0.2.0-beta.0)
 
 Build multi-agent pipelines for your codebase, visually.
 
@@ -11,9 +11,9 @@ You probably already chain Claude/Codex agents by hand: a scout reads the repo, 
 
 > Status: early beta. The pipeline format may still evolve.
 
-## Latest Beta Update
+## Version 0.2.0 Beta
 
-This beta adds a first serious security layer around local LLM execution.
+This beta focuses on control, inspection, and safer local execution.
 
 - `Policy` is now visible during runs and in the final recap.
 - Agents can run as `read-only`, `workspace-write`, `restricted-write`, or `dangerous`.
@@ -21,6 +21,14 @@ This beta adds a first serious security layer around local LLM execution.
 - `.singleton/security.json` defines project-wide defaults, blocked paths, and commit exclusions.
 - Singleton validates writes before execution, at write-time, and after each step by checking real project changes.
 - Security violations pause the REPL with `continue`, `stop`, and `diff` options.
+- `--debug` pauses before each step with `continue`, `inspect`, `edit`, `skip`, and `abort`.
+- Debug also pauses after each step to inspect parsed outputs, written files, detected changes, and diffs before continuing.
+- Debug inspect shows the full prompt that will be sent to the provider.
+- Debug edit lets you override resolved step inputs for the current run only.
+- Edited inputs are marked in prompt preview with `debug-edited="true"` to make prompt priority easier to inspect.
+- Debug decisions are recorded in `run-manifest.json` as lightweight `debugEvents`.
+- Debug runs are stored with a `DEBUG-` prefix in `.singleton/runs/`.
+- Raw provider output is saved as `raw-output.md` when structured output parsing fails.
 - Run manifests are written even when a pipeline fails, so partial runs remain inspectable.
 - `/commit-last` previews files, applies security exclusions, and asks for confirmation.
 
@@ -42,6 +50,12 @@ singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-sp
 ```
 
 Add `--dry-run` to validate the pipeline without calling any LLM.
+
+Use `--debug` to pause before each step, inspect the prompt, and adjust inputs for the current run:
+
+```bash
+singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json --debug
+```
 
 Open the visual builder on your own project:
 
@@ -74,6 +88,8 @@ Steps wire to each other through four references:
 | `$FILES:<dir>`         | out       | let an agent emit several files at once       |
 
 Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass validates inputs, files, providers, references, and security policies before any LLM is called. Each run lands in `.singleton/runs/<id>/` with a manifest, even when the run fails; `/commit-last` stages only approved project deliverables (never `.singleton` itself).
+
+Debug mode adds an interactive checkpoint before each agent. It is designed for inspecting what the agent will receive, testing alternate specs, or stopping a risky step before it runs. Any edited input is temporary and does not mutate the pipeline JSON.
 
 Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
 

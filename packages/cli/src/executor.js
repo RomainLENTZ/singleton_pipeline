@@ -239,6 +239,24 @@ function parseOutputs(text, outputNames) {
   return result;
 }
 
+async function writeRawOutputArtifact({ stepDir, step, text, reason, timeline }) {
+  if (!stepDir) return null;
+  const rawPath = path.join(stepDir, 'raw-output.md');
+  const content = [
+    `# Raw output for ${step.agent}`,
+    '',
+    `Reason: ${reason}`,
+    '',
+    '```text',
+    text || '',
+    '```',
+    '',
+  ].join('\n');
+  await fs.writeFile(rawPath, content);
+  timeline.logMuted(`raw output saved: ${path.relative(path.dirname(stepDir), rawPath)}`);
+  return rawPath;
+}
+
 function resolveProvider(step, agent) {
   return step.provider || agent.provider || 'claude';
 }
@@ -284,13 +302,73 @@ function previewValue(value, max = 140) {
 }
 
 const debugToken = {
-  key: (value) => `{${C.blue}-fg}{bold}${value}:{/}`,
+  key: (value) => `{${C.violet}-fg}{bold}${value}:{/}`,
   identity: (value) => `{${C.mint}-fg}${value || '—'}{/}`,
   text: (value) => `{#FFFFFF-fg}${value || '—'}{/}`,
   path: (value) => `{${C.blue}-fg}${value || '—'}{/}`,
   policy: (value) => `{${C.peach}-fg}${value || '—'}{/}`,
   muted: (value) => `{${C.ghost}-fg}${value || '—'}{/}`,
 };
+
+const DEBUG_ACTION_PROMPT = [
+  `{#FFFFFF-fg}{bold}Debug action{/}`,
+  `{${C.mint}-fg}▶ continue{/}{${C.ghost}-fg}(c){/}`,
+  `{${C.blue}-fg}? inspect{/}{${C.ghost}-fg}(i){/}`,
+  `{${C.peach}-fg}✎ edit{/}{${C.ghost}-fg}(e){/}`,
+  `{${C.violet}-fg}→ skip{/}{${C.ghost}-fg}(s){/}`,
+  `{${C.salmon}-fg}■ abort{/}{${C.ghost}-fg}(a){/}`,
+].join(` {${C.ghost}-fg}·{/} `);
+
+const DEBUG_ACTION_HELP = [
+  `{#FFFFFF-fg}Choose{/}`,
+  `{${C.mint}-fg}▶ continue{/}`,
+  `{${C.blue}-fg}? inspect{/}`,
+  `{${C.peach}-fg}✎ edit{/}`,
+  `{${C.violet}-fg}→ skip{/}`,
+  `{${C.salmon}-fg}■ abort{/}`,
+].join(` {${C.ghost}-fg}·{/} `);
+
+const DEBUG_POST_ACTION_PROMPT = [
+  `{#FFFFFF-fg}{bold}Debug output{/}`,
+  `{${C.mint}-fg}▶ continue{/}{${C.ghost}-fg}(c){/}`,
+  `{${C.blue}-fg}? output{/}{${C.ghost}-fg}(o){/}`,
+  `{${C.peach}-fg}± diff{/}{${C.ghost}-fg}(d){/}`,
+  `{${C.salmon}-fg}■ abort{/}{${C.ghost}-fg}(a){/}`,
+].join(` {${C.ghost}-fg}·{/} `);
+
+const DEBUG_POST_ACTION_HELP = [
+  `{#FFFFFF-fg}Choose{/}`,
+  `{${C.mint}-fg}▶ continue{/}`,
+  `{${C.blue}-fg}? output{/}`,
+  `{${C.peach}-fg}± diff{/}`,
+  `{${C.salmon}-fg}■ abort{/}`,
+].join(` {${C.ghost}-fg}·{/} `);
+
+function logDebugSection(title, timeline) {
+  const width = 72;
+  const text = ` ${title} `;
+  const left = Math.max(0, Math.floor((width - text.length) / 2));
+  const right = Math.max(0, width - text.length - left);
+  timeline.logMuted(' ');
+  timeline.logMuted(' ');
+  timeline.log(`{${C.ghost}-fg}${'─'.repeat(left)}{/}{${C.violet}-fg}{bold}${text}{/}{${C.ghost}-fg}${'─'.repeat(right)}{/}`);
+  timeline.logMuted(' ');
+  timeline.logMuted(' ');
+}
+
+function formatDebugList(values, fallback = 'none') {
+  if (!values.length) return debugToken.muted(fallback);
+  return values.map((value) => debugToken.identity(value)).join(` ${debugToken.muted('·')} `);
+}
+
+function pushDebugEvent(events, event) {
+  if (!Array.isArray(events)) return;
+  const { systemPrompt: _systemPrompt, workspaceInfo: _workspaceInfo, ...safeEvent } = event || {};
+  events.push({
+    timestamp: new Date().toISOString(),
+    ...safeEvent,
+  });
+}
 
 function looksLikePath(value) {
   const text = String(value || '').trim();
@@ -325,27 +403,185 @@ function logDebugInputs(resolvedInputs, timeline) {
   }
 }
 
-function logDebugPromptPreview({ systemPrompt, userMessage, timeline }) {
-  timeline.log(`{${C.violet}-fg}{bold}── debug prompt preview ──{/}`);
+function markEditedInputTags(line, editedInputs = new Set()) {
+  let text = String(line || ' ');
+  for (const name of editedInputs) {
+    const open = new RegExp(`<${name}>`, 'g');
+    text = text.replace(open, `<${name} debug-edited="true">`);
+  }
+  return text;
+}
+
+function debugPromptTextLine(line, { editedInputs = new Set() } = {}) {
+  const text = markEditedInputTags(line || ' ', editedInputs);
+  const tagPattern = /(<\/?[A-Za-z_][\w.-]*(?:\s+[^>]*)?>)/g;
+  const parts = text.split(tagPattern);
+  return parts.map((part) => {
+    if (!part) return '';
+    const isTag = tagPattern.test(part);
+    tagPattern.lastIndex = 0;
+    if (isTag) {
+      const isVariableTag = /^<\/?(workspace|security_policy|file)\b/i.test(part) === false;
+      const color = isVariableTag ? C.peach : C.blue;
+      tagPattern.lastIndex = 0;
+      return `{${color}-fg}{bold}${part}{/}`;
+    }
+    return `{#FFFFFF-fg}${part}{/}`;
+  }).join('');
+}
+
+function logDebugPromptPreview({ systemPrompt, userMessage, timeline, editedInputs = new Set() }) {
+  logDebugSection('Debug prompt preview', timeline);
+  if (editedInputs.size) {
+    timeline.logMuted(`${debugToken.key('edited inputs')} ${formatDebugList([...editedInputs])}`);
+    timeline.logMuted(`${debugToken.policy('Editing one input may not override other inputs or the agent prompt. Inspect the final prompt before continuing.')}`);
+    timeline.logMuted(' ');
+  }
   timeline.logMuted(debugToken.key('system prompt'));
   for (const line of systemPrompt.split('\n')) {
-    timeline.logMuted(`  ${debugToken.text(line || ' ')}`);
+    timeline.logMuted(`  ${debugPromptTextLine(line, { editedInputs })}`);
   }
+  timeline.logMuted(' ');
+  timeline.logMuted(' ');
   timeline.logMuted(debugToken.key('user message'));
   for (const line of userMessage.split('\n')) {
-    timeline.logMuted(`  ${debugToken.text(line || ' ')}`);
+    timeline.logMuted(`  ${debugPromptTextLine(line, { editedInputs })}`);
   }
 }
 
-async function editDebugInputs({ resolvedInputs, shell, timeline }) {
+function validateParsedOutputs(parsed, outputNames) {
+  const warnings = [];
+  for (const name of outputNames) {
+    const value = String(parsed[name] || '').trim();
+    if (!value) warnings.push(`output "${name}" is empty`);
+  }
+  return warnings;
+}
+
+function logDebugOutputs(parsed, outputNames, timeline) {
+  logDebugSection('Debug parsed outputs', timeline);
+  for (const name of outputNames) {
+    timeline.logMuted(debugLine(name, `${String(parsed[name] || '').length} chars`, 'identity'));
+    const lines = String(parsed[name] || '').split('\n');
+    for (const line of lines) {
+      timeline.logMuted(`  ${debugPromptTextLine(line)}`);
+    }
+    timeline.logMuted(' ');
+  }
+}
+
+function uniqueDebugPaths(entries) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!entry?.relPath || seen.has(entry.relPath)) continue;
+    seen.add(entry.relPath);
+    out.push(entry);
+  }
+  return out;
+}
+
+async function logDebugDiffs({ changes, writes = [], cwd, timeline }) {
+  logDebugSection('Debug step diff', timeline);
+  const entries = uniqueDebugPaths([...changes, ...writes]);
+  if (!entries.length) {
+    timeline.logMuted(`${debugToken.key('changes')} ${debugToken.muted('none')}`);
+    return;
+  }
+
+  for (const change of entries.slice(0, 8)) {
+    timeline.log(`${debugToken.key(change.relPath)}`);
+    const preview = await getViolationDiffPreview(cwd, change.relPath);
+    for (const line of preview) timeline.logMuted(`  ${line}`);
+  }
+  if (entries.length > 8) {
+    timeline.logMuted(`${debugToken.muted(`... ${entries.length - 8} more changed file(s)`)}`);
+  }
+}
+
+async function promptDebugPostStepDecision({
+  step,
+  parsed,
+  outputNames,
+  stepWrites,
+  stepChanges,
+  outputWarnings,
+  cwd,
+  timeline,
+  shell,
+  quiet,
+  decisionFn,
+  debugEvents,
+}) {
+  const summary = {
+    agent: step.agent,
+    outputs: outputNames,
+    outputWarnings,
+    writtenFiles: stepWrites.map((entry) => entry.relPath),
+    changedFiles: stepChanges.map((entry) => entry.relPath),
+  };
+
+  if (decisionFn) {
+    const decision = await decisionFn(summary);
+    const action = String(decision || 'continue').trim().toLowerCase() || 'continue';
+    pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action, ...summary });
+    return action;
+  }
+  if (quiet) {
+    pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'continue', ...summary });
+    return 'continue';
+  }
+
+  logDebugSection('Debug output review', timeline);
+  timeline.logMuted(debugLine('agent', step.agent, 'identity'));
+  timeline.logMuted(`${debugToken.key('outputs')} ${formatDebugList(outputNames)}`);
+  timeline.logMuted(`${debugToken.key('written files')} ${formatDebugList(stepWrites.map((entry) => entry.relPath))}`);
+  timeline.logMuted(`${debugToken.key('changed files')} ${formatDebugList(stepChanges.map((entry) => entry.relPath))}`);
+  if (outputWarnings.length) {
+    timeline.logMuted(`${debugToken.key('warnings')} ${debugToken.policy(outputWarnings.join(' · '))}`);
+  } else {
+    timeline.logMuted(`${debugToken.key('warnings')} ${debugToken.muted('none')}`);
+  }
+
+  while (true) {
+    const raw = shell
+      ? await shell.prompt(DEBUG_POST_ACTION_PROMPT)
+      : await input({ message: 'Debug output: continue, output, diff, or abort? (c/o/d/a)', default: 'c' });
+    const answer = String(raw || '').trim().toLowerCase();
+    if (!answer || answer === 'c' || answer === 'continue') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'continue', ...summary });
+      return 'continue';
+    }
+    if (answer === 'a' || answer === 'abort' || answer === 'stop') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'abort', ...summary });
+      return 'abort';
+    }
+    if (answer === 'o' || answer === 'output' || answer === 'inspect') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-output', ...summary });
+      logDebugOutputs(parsed, outputNames, timeline);
+      continue;
+    }
+    if (answer === 'd' || answer === 'diff') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-diff', ...summary });
+      await logDebugDiffs({ changes: stepChanges, writes: stepWrites, cwd, timeline });
+      continue;
+    }
+    timeline.logMuted(DEBUG_POST_ACTION_HELP);
+  }
+}
+
+async function editDebugInputs({ resolvedInputs, shell, timeline, step, debugEvents, editedInputs }) {
   const names = Object.keys(resolvedInputs);
   if (names.length === 0) {
     timeline.logMuted('No inputs to edit.');
     return resolvedInputs;
   }
 
-  timeline.log(`{${C.violet}-fg}{bold}── debug edit inputs ──{/}`);
+  logDebugSection('Debug edit inputs', timeline);
   timeline.logMuted(`Type an input name to override it. Empty input name returns to debug review.`);
+  timeline.logMuted(`${debugToken.policy('Warning: editing one input may not override other inputs or the agent prompt.')}`);
+  timeline.logMuted(`${debugToken.policy('Use inspect after editing to verify the final prompt.')}`);
+  timeline.logMuted(' ');
   const nextInputs = { ...resolvedInputs };
 
   while (true) {
@@ -365,6 +601,15 @@ async function editDebugInputs({ resolvedInputs, shell, timeline }) {
       ? await shell.prompt(`New value for ${name}`)
       : await input({ message: `New value for ${name}`, default: String(nextInputs[name] || '') });
     nextInputs[name] = String(value || '');
+    if (editedInputs) editedInputs.add(name);
+    pushDebugEvent(debugEvents, {
+      step: step?.agent,
+      phase: 'pre-step',
+      action: 'edit-input',
+      input: name,
+      previousPreview: previewValue(current, 120),
+      nextPreview: previewValue(nextInputs[name], 120),
+    });
     timeline.logMuted(`${debugToken.key(name)} updated.`);
   }
 }
@@ -385,6 +630,7 @@ async function promptDebugStepDecision({
   shell,
   quiet,
   decisionFn,
+  debugEvents,
 }) {
   const summary = {
     agent: step.agent,
@@ -403,21 +649,31 @@ async function promptDebugStepDecision({
   if (decisionFn) {
     const decision = await decisionFn(summary);
     if (typeof decision === 'object' && decision) {
+      const action = String(decision.action || 'continue').trim().toLowerCase();
+      const nextInputs = decision.inputs && typeof decision.inputs === 'object' ? decision.inputs : resolvedInputs;
+      const editedInputs = Object.keys(nextInputs).filter((name) => nextInputs[name] !== resolvedInputs[name]);
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action, editedInputs, ...summary });
       return {
-        action: String(decision.action || 'continue').trim().toLowerCase(),
-        inputs: decision.inputs && typeof decision.inputs === 'object' ? decision.inputs : resolvedInputs,
+        action,
+        inputs: nextInputs,
       };
     }
+    const action = String(decision || 'continue').trim().toLowerCase() || 'continue';
+    pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action, ...summary });
     return {
-      action: String(decision || 'continue').trim().toLowerCase() || 'continue',
+      action,
       inputs: resolvedInputs,
     };
   }
-  if (quiet) return { action: 'continue', inputs: resolvedInputs };
+  if (quiet) {
+    pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'continue', ...summary });
+    return { action: 'continue', inputs: resolvedInputs };
+  }
 
   let currentInputs = { ...resolvedInputs };
+  const editedInputs = new Set();
 
-  timeline.log(`{${C.violet}-fg}{bold}── debug step review ──{/}`);
+  logDebugSection('Debug step review', timeline);
   timeline.logMuted(debugLine('step', `${stepNumber}/${totalSteps}`));
   timeline.logMuted(debugLine('agent', step.agent, 'identity'));
   timeline.logMuted(debugLine('provider', provider, 'identity'));
@@ -431,26 +687,52 @@ async function promptDebugStepDecision({
 
   while (true) {
     const raw = shell
-      ? await shell.prompt('Debug: continue, inspect, edit, skip, or abort? (c/i/e/s/a)')
+      ? await shell.prompt(DEBUG_ACTION_PROMPT)
       : await input({ message: 'Debug: continue, inspect, edit, skip, or abort? (c/i/e/s/a)', default: 'c' });
     const answer = String(raw || '').trim().toLowerCase();
-    if (!answer || answer === 'c' || answer === 'continue') return { action: 'continue', inputs: currentInputs };
-    if (answer === 's' || answer === 'skip') return { action: 'skip', inputs: currentInputs };
-    if (answer === 'a' || answer === 'abort' || answer === 'stop') return { action: 'abort', inputs: currentInputs };
+    if (!answer || answer === 'c' || answer === 'continue') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'continue', ...summary });
+      return { action: 'continue', inputs: currentInputs };
+    }
+    if (answer === 's' || answer === 'skip') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'skip', ...summary });
+      return { action: 'skip', inputs: currentInputs };
+    }
+    if (answer === 'a' || answer === 'abort' || answer === 'stop') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'abort', ...summary });
+      return { action: 'abort', inputs: currentInputs };
+    }
     if (answer === 'i' || answer === 'inspect') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'inspect-prompt', ...summary });
       logDebugPromptPreview({
         systemPrompt: summary.systemPrompt,
         userMessage: buildUserMessage(currentInputs, outputNames, summary.workspaceInfo, securityPolicy),
         timeline,
+        editedInputs,
       });
       continue;
     }
     if (answer === 'e' || answer === 'edit') {
-      currentInputs = await editDebugInputs({ resolvedInputs: currentInputs, shell, timeline });
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'open-edit-inputs', ...summary });
+      currentInputs = await editDebugInputs({ resolvedInputs: currentInputs, shell, timeline, step, debugEvents, editedInputs });
       logDebugInputs(currentInputs, timeline);
+      if (editedInputs.size) {
+        const inspectAnswer = shell
+          ? await shell.prompt(`{#FFFFFF-fg}Inspect final prompt now?{/} {${C.mint}-fg}yes{/}{${C.ghost}-fg}(y){/} {${C.ghost}-fg}or{/} {${C.ghost}-fg}no(n){/}`)
+          : await input({ message: 'Inspect final prompt now? (y/N)', default: 'n' });
+        if (['y', 'yes'].includes(String(inspectAnswer || '').trim().toLowerCase())) {
+          pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'inspect-prompt-after-edit', editedInputs: [...editedInputs], ...summary });
+          logDebugPromptPreview({
+            systemPrompt: summary.systemPrompt,
+            userMessage: buildUserMessage(currentInputs, outputNames, summary.workspaceInfo, securityPolicy),
+            timeline,
+            editedInputs,
+          });
+        }
+      }
       continue;
     }
-    timeline.logMuted('Choose c/continue, i/inspect, e/edit, s/skip, or a/abort.');
+    timeline.logMuted(DEBUG_ACTION_HELP);
   }
 }
 
@@ -868,7 +1150,23 @@ async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = {}) {
   try {
     const { stdout } = await runCommand('git', ['diff', '--', relPath], { cwd });
     const lines = stdout.trimEnd().split('\n').filter(Boolean);
-    if (lines.length === 0) return ['No git diff available for this path.'];
+    if (lines.length === 0) {
+      try {
+        await runCommand('git', ['ls-files', '--error-unmatch', relPath], { cwd });
+        return ['No git diff available for this path.'];
+      } catch {
+        try {
+          const raw = await fs.readFile(path.join(cwd, relPath), 'utf8');
+          const preview = raw.split('\n').slice(0, maxLines);
+          if (raw.split('\n').length > maxLines) {
+            preview.push(`... file preview truncated (${raw.split('\n').length - maxLines} more lines)`);
+          }
+          return [`new/untracked file: ${relPath}`, ...preview];
+        } catch {
+          return ['No git diff available for this path.'];
+        }
+      }
+    }
     const clipped = lines.slice(0, maxLines);
     if (lines.length > maxLines) clipped.push(`... diff truncated (${lines.length - maxLines} more lines)`);
     return clipped;
@@ -936,7 +1234,7 @@ async function handlePostRunViolations({ violations, step, securityPolicy, timel
   }
 }
 
-async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [], status = 'done', error = null }) {
+async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [], status = 'done', error = null, debugEvents = [] }) {
   if (!runDir) return;
 
   const uniqueWrites = [];
@@ -978,6 +1276,7 @@ async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrite
       turns: s.turns,
       cost: s.cost,
     })),
+    debugEvents,
   };
 
   await fs.writeFile(path.join(runDir, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
@@ -1000,7 +1299,7 @@ export async function runPipeline(filePath, opts = {}) {
   // Versioned workspace for this run — intermediate artifacts land here.
   const now = new Date();
   const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-  const runId = `${ts}-${pipeline.name}`;
+  const runId = `${debug ? 'DEBUG-' : ''}${ts}-${pipeline.name}`;
   const runDir = dryRun ? null : path.join(cwd, '.singleton', 'runs', runId);
   if (runDir) await fs.mkdir(runDir, { recursive: true });
 
@@ -1036,6 +1335,7 @@ export async function runPipeline(filePath, opts = {}) {
   const fileWrites = [];
   const verboseLog = [];
   const stats = [];
+  const debugEvents = [];
   let runError = null;
 
   try {
@@ -1188,6 +1488,7 @@ export async function runPipeline(filePath, opts = {}) {
           shell,
           quiet,
           decisionFn: opts.debugDecision,
+          debugEvents,
         });
 
         resolvedInputs = decision.inputs || resolvedInputs;
@@ -1279,6 +1580,7 @@ export async function runPipeline(filePath, opts = {}) {
       const elapsedSeconds = (Date.now() - started) / 1000;
       const elapsed = elapsedSeconds.toFixed(1);
       const text = result.text;
+      const stepWritesStart = fileWrites.length;
 
       if (verbose) {
         timeline.log(`── output ──`);
@@ -1286,6 +1588,7 @@ export async function runPipeline(filePath, opts = {}) {
       }
 
       const parsed = parseOutputs(text, outputNames);
+      const outputWarnings = validateParsedOutputs(parsed, outputNames);
 
       for (const name of outputNames) {
         registry[`${step.agent}.${name}`] = parsed[name];
@@ -1306,6 +1609,13 @@ export async function runPipeline(filePath, opts = {}) {
           const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
           let manifest;
           try { manifest = JSON.parse(rawJson); } catch (e) {
+            await writeRawOutputArtifact({
+              stepDir,
+              step,
+              text,
+              reason: `Invalid $FILES JSON for output "${name}"`,
+              timeline,
+            });
             failStep(timeline, timelineIndex, 'invalid $FILES JSON', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
           }
           for (const entry of (Array.isArray(manifest) ? manifest : [])) {
@@ -1351,9 +1661,10 @@ export async function runPipeline(filePath, opts = {}) {
         }
       }
 
+      let stepChanges = [];
       if (stepBeforeSnapshot) {
         const stepAfterSnapshot = await snapshotProjectFiles(cwd);
-        const stepChanges = detectSnapshotChanges(stepBeforeSnapshot, stepAfterSnapshot, cwd);
+        stepChanges = detectSnapshotChanges(stepBeforeSnapshot, stepAfterSnapshot, cwd);
         const violations = validatePostRunChanges({
           changes: stepChanges,
           securityPolicy,
@@ -1370,6 +1681,39 @@ export async function runPipeline(filePath, opts = {}) {
           cwd,
         });
         currentSnapshot = stepAfterSnapshot;
+      }
+
+      if (debug) {
+        timeline.setPaused(timelineIndex, 'output review');
+        const postDecision = await promptDebugPostStepDecision({
+          step,
+          parsed,
+          outputNames,
+          stepWrites: fileWrites.slice(stepWritesStart),
+          stepChanges,
+          outputWarnings,
+          cwd,
+          timeline,
+          shell,
+          quiet,
+          decisionFn: opts.debugPostDecision,
+          debugEvents,
+        });
+
+        if (postDecision === 'abort') {
+          stats.push({
+            agent: step.agent,
+            provider,
+            model: model || '—',
+            securityProfile: securityPolicy.profile,
+            permissionMode: permissionMode || '—',
+            status: 'failed',
+            seconds: elapsedSeconds,
+            turns: Number(result.metadata.turns || 0),
+            cost: Number(result.metadata.costUsd || 0),
+          });
+          failStep(timeline, timelineIndex, 'aborted after output review', `Pipeline aborted after step "${step.agent}" output review.`);
+        }
       }
 
       const costInfo = result.metadata.costUsd ? ` · $${result.metadata.costUsd.toFixed(4)}` : '';
@@ -1411,6 +1755,7 @@ export async function runPipeline(filePath, opts = {}) {
       detectedDeliverables,
       status: runStatus,
       error: runError,
+      debugEvents,
     });
     const latest = path.join(cwd, '.singleton', 'runs', 'latest');
     try { await fs.unlink(latest); } catch { /* missing is fine */ }

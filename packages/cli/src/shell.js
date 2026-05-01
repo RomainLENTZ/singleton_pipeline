@@ -216,8 +216,15 @@ export function createShell() {
 
   function updatePrompt() {
     if (promptMode) {
+      const message = String(promptMode.message || '');
+      const renderedMessage = message.includes('{')
+        ? message
+        : `{${C.dimV}-fg}${message}{/}`;
+      const marker = message.includes('Debug action')
+        ? ''
+        : `{${C.pink}-fg}?{/}  `;
       promptBox.setContent(
-        `{${C.pink}-fg}?{/}  {${C.dimV}-fg}${promptMode.message}{/}  {${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`
+        `${marker}${renderedMessage}  {${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`
       );
     } else {
       if (buffer) {

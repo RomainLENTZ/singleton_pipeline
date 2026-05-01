@@ -15,6 +15,7 @@ Use this file when you need exact behavior, node semantics, command details, or 
 - [Node types](#node-types)
 - [References](#references)
 - [Execution model](#execution-model)
+- [Debug mode](#debug-mode)
 - [Deliverables vs intermediates](#deliverables-vs-intermediates)
 - [Run artifacts](#run-artifacts)
 - [Multi-provider model](#multi-provider-model)
@@ -541,6 +542,92 @@ Dry-run:
 
 Use it to validate a pipeline structure safely.
 
+## Debug mode
+
+Debug mode pauses before and after each agent step.
+
+```bash
+singleton run --pipeline .singleton/pipelines/my-pipeline.json --debug
+```
+
+In the REPL:
+
+```txt
+/run my-pipeline --debug
+```
+
+Before each step, Singleton displays:
+
+- step number
+- agent id
+- provider
+- model
+- security profile
+- permission mode when present
+- expected outputs
+- resolved inputs
+
+Available actions:
+
+| Action | Alias | Behavior |
+| ------ | ----- | -------- |
+| `continue` | `c` | run the step normally |
+| `inspect` | `i` | print the full system prompt and user message that will be sent to the provider |
+| `edit` | `e` | override resolved inputs for this run only |
+| `skip` | `s` | skip the current step and register placeholder outputs |
+| `abort` | `a` | stop the pipeline before the step runs |
+
+After each executed step, Singleton displays:
+
+- parsed outputs
+- files written through declared `$FILE` / `$FILES` sinks
+- project files changed during the step
+- output warnings, such as empty parsed outputs
+
+Post-step actions:
+
+| Action | Alias | Behavior |
+| ------ | ----- | -------- |
+| `continue` | `c` | continue to the next step |
+| `output` | `o` | print the parsed outputs in full |
+| `diff` | `d` | print git diff previews for detected project changes |
+| `abort` | `a` | stop the pipeline after the current step |
+
+Edited inputs are runtime-only:
+
+- the pipeline JSON is not modified
+- the source agent Markdown is not modified
+- downstream `$PIPE` references receive the runtime output produced after the edited prompt
+- Singleton warns that editing one input may not override other inputs or the agent prompt
+- after editing, Singleton can immediately show the final prompt
+- edited input tags are marked with `debug-edited="true"` in prompt preview
+
+During debug prompts, the pipeline log remains scrollable with arrow keys, page up/down, home, and end. The timeline marks the current step as `Paused` until you choose an action.
+
+Debug run directories are prefixed with `DEBUG-`:
+
+```txt
+.singleton/runs/DEBUG-20260501-151230-my-pipeline/
+```
+
+Debug runs add a `debugEvents` array to `run-manifest.json`.
+
+Each event contains:
+
+- timestamp
+- step id
+- phase (`pre-step` or `post-step`)
+- action
+- compact metadata such as edited input names, output names, written files, changed files, or warnings
+
+Large prompt/output bodies are not stored in `debugEvents`; use run artifacts and the interactive inspect views for full content.
+
+When structured output parsing fails, for example invalid `$FILES` JSON, Singleton writes the raw provider response before failing the step:
+
+```txt
+.singleton/runs/<run-id>/<step>/raw-output.md
+```
+
 ## Deliverables vs intermediates
 
 Singleton distinguishes between:
@@ -656,6 +743,7 @@ Flags:
 
 - `--dry-run` — validate without calling any LLM CLI
 - `--verbose` — surface raw provider stdout/stderr
+- `--debug` — pause before each step for inspect/edit/skip/abort controls
 
 ### `serve`
 
@@ -691,7 +779,7 @@ singleton
 ## REPL commands
 
 ```txt
-/run <name> [--dry] [--verbose]
+/run <name> [--dry] [--verbose] [--debug]
 /scan
 /new
 /serve
@@ -708,6 +796,7 @@ Shell features:
 - persistent command history
 - scrollable logs
 - pipeline execution mode
+- debug mode with step checkpoints
 - footer with project status information
 
 ## `/commit-last`
