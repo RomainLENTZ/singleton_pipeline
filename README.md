@@ -9,12 +9,16 @@ You probably already chain Claude, Codex, or Copilot agents by hand: a scout rea
 - runs are versioned, with a manifest of what was actually written
 - nothing leaves your machine Singleton drives local provider CLIs (`claude`, `codex`, `copilot`)
 
-> Status: early beta. The pipeline format may still evolve.
+> Status: beta. Singleton is usable locally, but the pipeline format, provider adapters, and builder UX may still evolve.
 
-## Version 0.2.0 Beta
+## Version 0.3.0 Beta
 
-This beta focuses on control, inspection, and safer local execution.
+This beta focuses on multi-provider execution, Copilot support, inspection, and safer local runs.
 
+- Claude, Codex, and Copilot can now run from the same pipeline model.
+- Copilot support uses the local `copilot` CLI with optional `runner_agent`.
+- Copilot tool permissions are generated from Singleton security profiles using `--allow-tool` and `--deny-tool`.
+- Repo-level Copilot profiles in `.github/agents/*.agent.md` are optional; user-level and organization-level agents can also be used.
 - `Policy` is now visible during runs and in the final recap.
 - Agents can run as `read-only`, `workspace-write`, `restricted-write`, or `dangerous`.
 - Pipelines can restrict writers to exact files or folders with `allowed_paths`.
