@@ -95,6 +95,7 @@ Your prompt here.
 - `tags`
 - `provider`
 - `model`
+- `runner_agent`
 - `permission_mode`
 - `estimated_tokens`
 - `security_profile`
@@ -108,8 +109,9 @@ Your prompt here.
 - `inputs` — comma-separated list of logical inputs exposed to the prompt
 - `outputs` — comma-separated list of logical outputs expected from the step
 - `tags` — optional categorization
-- `provider` — execution backend, currently `claude` or `codex`
+- `provider` — execution backend, currently `claude`, `codex`, or `copilot`
 - `model` — provider-specific model name
+- `runner_agent` — provider-side agent name; currently used by Copilot's `--agent` option
 - `permission_mode` — applies to Claude only, ignored for Codex runs
 - `estimated_tokens` — optional metadata for planning
 - `security_profile` — Singleton write policy profile
@@ -129,6 +131,12 @@ Model resolution:
 1. `step.model`
 2. `agent.model`
 3. no explicit model
+
+Runner agent resolution (Copilot only):
+
+1. `step.runner_agent`
+2. `agent.runner_agent`
+3. no explicit runner agent, so Copilot uses its default agent
 
 Permission mode resolution (Claude only):
 
@@ -159,6 +167,7 @@ Singleton has its own project-root policy layer. It is separate from provider pe
 - **Policy** in the run recap means Singleton's policy for the step.
 - `permission_mode` is provider-specific. Today it mainly matters for Claude, for example `bypassPermissions`.
 - A step can therefore show `restricted-write · perm:bypassPermissions`: Claude is allowed to use write tools, but Singleton still validates and monitors the allowed paths.
+- Copilot receives provider-native tool permissions generated from the resolved Singleton policy.
 
 ### Security profiles
 
@@ -292,6 +301,31 @@ Singleton checks security in three places:
 - **Post-run validation**: snapshots the project before and after each step, detects real project changes, and checks them against the step policy.
 
 This matters because provider CLIs can edit files directly through their own tools. Post-run validation detects those direct edits even if they did not go through `$FILE` or `$FILES`.
+
+### Copilot tool permissions
+
+For `provider: copilot`, Singleton converts the resolved security policy to Copilot CLI permission flags.
+
+Mapping:
+
+- `read-only` — allows `read`, denies `write`, `shell`, `url`, and `memory`.
+- `restricted-write` — allows `read` and `write(...)` only for each `allowed_paths` entry.
+- `workspace-write` — allows `read` and `write`, while still denying dangerous shell defaults such as `git push`.
+- `dangerous` — uses Copilot's broad tool mode and keeps explicit deny rules where possible.
+
+Examples:
+
+```txt
+restricted-write + allowed_paths: src, vite.config.ts
+→ --allow-tool=read
+→ --allow-tool=write(src/**)
+→ --allow-tool=write(vite.config.ts)
+→ --deny-tool=shell(git push)
+→ --deny-tool=url
+→ --deny-tool=memory
+```
+
+Copilot permissions reduce risk before the step runs. Singleton still performs write-time and post-run validation afterwards.
 
 ### Security violations
 
@@ -709,6 +743,33 @@ If `permission_mode` is not set, Singleton does not inject one explicitly.
 - ignores `permission_mode`
 
 `AGENTS.md` is not scanned as a Singleton agent — it is forwarded only as Codex project context.
+
+### Copilot
+
+- executes through the local `copilot` CLI
+- supports explicit `model`
+- supports optional `runner_agent`, mapped to Copilot's `--agent` option
+- can run without `.github/agents` when no `runner_agent` is set or when Copilot resolves a user-level or organization-level agent
+- repo-level Copilot agent profiles live in `.github/agents/*.agent.md`
+- streams structured output through `--output-format json`
+- maps Singleton security profiles to Copilot `--allow-tool` / `--deny-tool` flags
+- ignores `permission_mode`
+
+Example agent config:
+
+```md
+- **provider**: copilot
+- **model**: gpt-4.1
+- **runner_agent**: storybook-to-aem
+- **security_profile**: restricted-write
+- **allowed_paths**: src, docs/composants
+```
+
+`runner_agent: storybook-to-aem` maps to Copilot's repo profile `.github/agents/storybook-to-aem.agent.md` when present. If the profile is not found locally, Singleton warns instead of failing because Copilot can also resolve user-level or organization-level agents.
+
+If `runner_agent` is omitted, Singleton does not pass `--agent`, and Copilot uses its default agent. This is the most portable Copilot setup because it does not require a `.github/agents` directory.
+
+In nested demo projects or monorepos, Copilot resolves repo-level agents from the git root it detects. If your pipeline project is nested inside another git repository, either make the nested project a git repository too or place the `.github/agents/*.agent.md` profile at the parent git root.
 
 ## CLI commands
 

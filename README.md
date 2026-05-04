@@ -1,13 +1,13 @@
-# Singleton Pipeline Builder (v0.2.0-beta.0)
+# Singleton Pipeline Builder (v0.3.0-beta.0)
 
 Build multi-agent pipelines for your codebase, visually.
 
-You probably already chain Claude/Codex agents by hand: a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
+You probably already chain Claude, Codex, or Copilot agents by hand: a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
 
 - agents are plain Markdown files
 - pipelines are JSON, stored in your project under `.singleton/`
 - runs are versioned, with a manifest of what was actually written
-- nothing leaves your machine Singleton drives the local `claude` and `codex` CLIs
+- nothing leaves your machine Singleton drives local provider CLIs (`claude`, `codex`, `copilot`)
 
 > Status: early beta. The pipeline format may still evolve.
 
@@ -39,7 +39,7 @@ npm install
 npm link        # optional, to use `singleton` globally
 ```
 
-Requirements: Node 20+, plus `claude` and/or `codex` available in your `$PATH` with a working session.
+Requirements: Node 20+, plus the provider CLIs you want to use in your `$PATH` with a working session: `claude`, `codex`, and/or `copilot`.
 
 ## Quickstart
 
@@ -122,9 +122,15 @@ my-project/
     agents/      # your Singleton agents
     pipelines/   # saved pipelines
     runs/        # versioned run artifacts
+  .github/
+    agents/      # optional repo-level Copilot profiles (*.agent.md)
 ```
 
-`.claude/agents/` is also scanned, and `AGENTS.md` is forwarded to Codex as project context.
+`.claude/agents/` is also scanned for Singleton-compatible agents. `.github/agents/*.agent.md` is not scanned as Singleton agents; it is only used by Copilot when a Singleton agent sets `runner_agent`.
+
+Copilot does not require `.github/agents`. If `runner_agent` is omitted, Copilot uses its default agent. If `runner_agent` is set, Copilot can resolve it from a repo-level profile, a user-level profile, or an organization-level profile. Singleton warns when a repo-level profile is not found, but does not fail preflight.
+
+`AGENTS.md` is forwarded to Codex as project context.
 
 ## Screenshots
 

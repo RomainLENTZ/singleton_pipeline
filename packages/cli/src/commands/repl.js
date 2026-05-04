@@ -202,6 +202,7 @@ const SINGLETON_RAW = [
 ];
 
 const ART_WIDTH = Math.max(...SINGLETON_RAW.map((l) => l.length));
+const APP_VERSION = 'v0.3.0-beta.0';
 
 async function showWelcome(root, shell) {
   const now     = new Date();
@@ -219,10 +220,15 @@ async function showWelcome(root, shell) {
   const headerLines = [
     '',
     ' '.repeat(tw('Welcome back')),
-    `${dateStr}  ${timeStr}`,
+    `${dateStr}  ${timeStr}  {${C.ghost}-fg}${APP_VERSION}{/}`,
     '',
     `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`,
     `${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
+    '',
+    `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}you can now debug pipeline runs{/}`,
+    `{${C.ghost}-fg}·{/} {${C.mint}-fg}pause steps{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}inspect prompts{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}edit inputs{/}  {${C.ghost}-fg}·{/} {${C.violet}-fg}review diffs{/}`,
+    `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}Copilot runner support{/}`,
+    `{${C.ghost}-fg}·{/} {${C.mint}-fg}provider copilot{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}runner_agent optional{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}native tool permissions{/}`,
     '',
   ];
   const TAGLINE  = 'one to rule them all';

@@ -19,9 +19,16 @@ const CODEX_MODELS = [
   { name: 'gpt-5.1-codex', value: 'gpt-5.1-codex' },
   CHOICE_NONE,
 ];
+const COPILOT_MODELS = [
+  { name: 'gpt-5.4-mini', value: 'gpt-5.4-mini' },
+  { name: 'gpt-5.4', value: 'gpt-5.4' },
+  { name: 'gpt-4.1', value: 'gpt-4.1' },
+  CHOICE_NONE,
+];
 const PROVIDERS = [
   { name: 'claude', value: 'claude' },
   { name: 'codex', value: 'codex' },
+  { name: 'copilot', value: 'copilot' },
 ];
 const CLAUDE_PERMISSION_MODES = [
   { name: '(safe default)', value: '' },
@@ -30,6 +37,7 @@ const CLAUDE_PERMISSION_MODES = [
 const DEFAULT_AGENTS_DIR = '.singleton/agents';
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6';
 const CODEX_DEFAULT_MODEL = 'gpt-5.4';
+const COPILOT_DEFAULT_MODEL = 'gpt-5.4-mini';
 
 function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort();
@@ -75,7 +83,9 @@ function validateAgentId(existingIds, value) {
 }
 
 function defaultModelForProvider(provider) {
-  return provider === 'codex' ? CODEX_DEFAULT_MODEL : CLAUDE_DEFAULT_MODEL;
+  if (provider === 'codex') return CODEX_DEFAULT_MODEL;
+  if (provider === 'copilot') return COPILOT_DEFAULT_MODEL;
+  return CLAUDE_DEFAULT_MODEL;
 }
 
 function permissionChoicesForProvider(provider) {
@@ -89,6 +99,7 @@ function normalizeAgentDraft(draft) {
     outputs: uniqueSorted(draft.outputs || []),
     tags: uniqueSorted(draft.tags || []),
     permissionMode: draft.provider === 'claude' ? (draft.permissionMode || '') : '',
+    runnerAgent: draft.provider === 'copilot' ? (draft.runnerAgent || '') : '',
     model: draft.model || '',
     estimatedTokens: draft.estimatedTokens || '',
   };
@@ -124,7 +135,9 @@ async function askShellValue(shell, message, { defaultValue = '', validate = nul
 }
 
 function modelChoicesForProvider(provider) {
-  return provider === 'codex' ? CODEX_MODELS : CLAUDE_MODELS;
+  if (provider === 'codex') return CODEX_MODELS;
+  if (provider === 'copilot') return COPILOT_MODELS;
+  return CLAUDE_MODELS;
 }
 
 async function askShellChoice(shell, message, choices, defaultValue) {
@@ -252,6 +265,12 @@ export async function newAgentCommand(opts) {
         default: '',
       })
     : '';
+  const runnerAgent = provider === 'copilot'
+    ? await input({
+        message: 'runner_agent',
+        default: id,
+      })
+    : '';
 
   const estimatedRaw = await input({
     message: 'estimated_tokens',
@@ -276,6 +295,7 @@ export async function newAgentCommand(opts) {
       tags,
       provider,
       model,
+      runnerAgent,
       permissionMode,
       estimatedTokens: estimatedRaw,
       filename,
@@ -339,6 +359,9 @@ export async function newAgentShellCommand({ root, shell }) {
   const permissionMode = provider === 'claude'
     ? await askShellChoice(shell, 'permission_mode', permissionChoicesForProvider(provider), '')
     : '';
+  const runnerAgent = provider === 'copilot'
+    ? await askShellValue(shell, 'runner_agent', { defaultValue: id })
+    : '';
 
   const estimatedTokens = await askShellValue(shell, 'estimated_tokens (optional)', {
     validate: (v) => (v === '' || /^\d+$/.test(v) ? true : 'expected an integer'),
@@ -360,6 +383,7 @@ export async function newAgentShellCommand({ root, shell }) {
       tags,
       provider,
       model,
+      runnerAgent,
       permissionMode,
       estimatedTokens,
       filename,
@@ -384,7 +408,7 @@ export async function newAgentShellCommand({ root, shell }) {
   return targetFile;
 }
 
-function renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, permissionMode, estimatedTokens }) {
+function renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, runnerAgent, permissionMode, estimatedTokens }) {
   const lines = [
     `# ${title}`,
     '',
@@ -398,6 +422,7 @@ function renderAgentFile({ title, id, description, inputs, outputs, tags, provid
   if (tags.length) lines.push(`- **tags**: ${tags.join(', ')}`);
   if (provider) lines.push(`- **provider**: ${provider}`);
   if (model) lines.push(`- **model**: ${model}`);
+  if (runnerAgent) lines.push(`- **runner_agent**: ${runnerAgent}`);
   if (permissionMode) lines.push(`- **permission_mode**: ${permissionMode}`);
   if (estimatedTokens) lines.push(`- **estimated_tokens**: ${estimatedTokens}`);
   lines.push('', '---', '', '## Prompt', '', '<!-- Your prompt here -->', '');

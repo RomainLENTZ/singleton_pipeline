@@ -59,6 +59,7 @@ export function parseAgentFileDetailed(content, file) {
     tags: config.tags || [],
     provider: config.provider,
     model: config.model,
+    runner_agent: config.runner_agent,
     permission_mode: config.permission_mode,
     security_profile: config.security_profile,
     allowed_paths: config.allowed_paths || [],

@@ -12,6 +12,7 @@ const VALID_AGENT = `# My Agent
 - **tags**: writing, code
 - **provider**: claude
 - **model**: claude-sonnet-4-6
+- **runner_agent**: team-agent
 - **permission_mode**: bypassPermissions
 - **security_profile**: restricted-write
 - **allowed_paths**: src, tests
@@ -38,6 +39,7 @@ describe('parseAgentFile', () => {
     expect(a.tags).toEqual(['writing', 'code']);
     expect(a.provider).toBe('claude');
     expect(a.model).toBe('claude-sonnet-4-6');
+    expect(a.runner_agent).toBe('team-agent');
     expect(a.permission_mode).toBe('bypassPermissions');
     expect(a.security_profile).toBe('restricted-write');
     expect(a.allowed_paths).toEqual(['src', 'tests']);

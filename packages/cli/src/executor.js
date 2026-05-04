@@ -265,6 +265,38 @@ function resolveModel(step, agent) {
   return step.model || agent.model || null;
 }
 
+function resolveRunnerAgent(step, agent) {
+  return step.runner_agent || agent.runner_agent || null;
+}
+
+async function resolveCopilotProjectRoot(cwd) {
+  try {
+    const { stdout } = await runCommand('git', ['rev-parse', '--show-toplevel'], { cwd });
+    return stdout.trim() || cwd;
+  } catch {
+    return cwd;
+  }
+}
+
+async function findCopilotRepoAgentProfile(cwd, runnerAgent) {
+  const name = String(runnerAgent || '').trim();
+  if (!name || name.includes('/') || name.includes('\\')) return null;
+  const projectRoot = await resolveCopilotProjectRoot(cwd);
+  const file = path.join(projectRoot, '.github', 'agents', `${name}.agent.md`);
+  try {
+    await fs.access(file);
+    return { file, projectRoot };
+  } catch {
+    const singletonRootFile = path.join(cwd, '.github', 'agents', `${name}.agent.md`);
+    try {
+      await fs.access(singletonRootFile);
+      return { file: singletonRootFile, projectRoot, notVisibleFromGitRoot: projectRoot !== cwd };
+    } catch {
+      return { file: null, projectRoot };
+    }
+  }
+}
+
 function resolvePermissionMode(step, agent) {
   return step.permission_mode || agent.permission_mode || '';
 }
@@ -620,6 +652,7 @@ async function promptDebugStepDecision({
   totalSteps,
   provider,
   model,
+  runnerAgent,
   permissionMode,
   securityPolicy,
   resolvedInputs,
@@ -638,6 +671,7 @@ async function promptDebugStepDecision({
     totalSteps,
     provider,
     model,
+    runnerAgent,
     permissionMode,
     securityProfile: securityPolicy.profile,
     inputs: Object.keys(resolvedInputs),
@@ -678,6 +712,7 @@ async function promptDebugStepDecision({
   timeline.logMuted(debugLine('agent', step.agent, 'identity'));
   timeline.logMuted(debugLine('provider', provider, 'identity'));
   timeline.logMuted(debugLine('model', model || '—', 'identity'));
+  if (runnerAgent) timeline.logMuted(debugLine('runner_agent', runnerAgent, 'identity'));
   timeline.logMuted(debugLine('security', securityPolicy.profile, 'policy'));
   timeline.logMuted(debugLine('permission', permissionMode || '—', 'policy'));
   timeline.logMuted(
@@ -850,6 +885,10 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
 
     const model = resolveModel(step, agent);
     if (!model) warnings.push(`${label} has no model configured for provider "${provider}".`);
+    const runnerAgent = resolveRunnerAgent(step, agent);
+    if (provider === 'copilot' && !runnerAgent) {
+      warnings.push(`${label} uses provider "copilot" without runner_agent; Copilot will use its default agent.`);
+    }
     const permissionMode = resolvePermissionMode(step, agent);
     if (provider === 'claude' && permissionMode && permissionMode !== 'bypassPermissions') {
       errors.push(`${label} uses unsupported Claude permission_mode "${permissionMode}".`);
@@ -859,6 +898,17 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     }
     if (provider === 'claude' && permissionMode === 'bypassPermissions') {
       infos.push(`${label} runs Claude with permission_mode "${permissionMode}".`);
+    }
+    if (provider === 'copilot' && runnerAgent) {
+      infos.push(`${label} runs Copilot with runner_agent "${runnerAgent}".`);
+      const repoAgentProfile = await findCopilotRepoAgentProfile(cwd, runnerAgent);
+      if (repoAgentProfile?.file && !repoAgentProfile.notVisibleFromGitRoot) {
+        infos.push(`${label} Copilot repo agent profile: ${path.relative(cwd, repoAgentProfile.file)}.`);
+      } else if (repoAgentProfile?.file && repoAgentProfile.notVisibleFromGitRoot) {
+        warnings.push(`${label} Copilot runner_agent "${runnerAgent}" exists at ${path.relative(cwd, repoAgentProfile.file)}, but Copilot will use git root ${repoAgentProfile.projectRoot}. Move the profile to ${path.relative(cwd, path.join(repoAgentProfile.projectRoot, '.github', 'agents'))} or run inside a standalone git repo.`);
+      } else {
+        warnings.push(`${label} Copilot runner_agent "${runnerAgent}" was not found in .github/agents; Copilot may still resolve a user-level or organization-level agent.`);
+      }
     }
     if (shouldHighlightSecurity({ provider, permissionMode, securityPolicy })) {
       securityHighlights.push(formatSecurityHighlight({ label, provider, permissionMode, securityPolicy }));
@@ -1269,6 +1319,7 @@ async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrite
       agent: s.agent,
       provider: s.provider,
       model: s.model,
+      runnerAgent: s.runnerAgent,
       securityProfile: s.securityProfile,
       permissionMode: s.permissionMode,
       status: s.status,
@@ -1418,11 +1469,15 @@ export async function runPipeline(filePath, opts = {}) {
 
       const outputNames = Object.keys(step.outputs || {});
       if (outputNames.length === 0) {
+        const provider = resolveProvider(step, agent);
+        const model = resolveModel(step, agent);
+        const runnerAgent = resolveRunnerAgent(step, agent);
         timeline.setDone(timelineIndex, 'skipped (no outputs)');
         stats.push({
           agent: step.agent,
-          provider: step.provider || 'claude',
-          model: step.model || '—',
+          provider,
+          model: model || '—',
+          runnerAgent: runnerAgent || '—',
           securityProfile: resolveSecurityPolicyWithConfig(step, agent, securityConfig).profile,
           permissionMode: step.permission_mode || agent.permission_mode || '—',
           status: 'skipped',
@@ -1436,6 +1491,7 @@ export async function runPipeline(filePath, opts = {}) {
       if (dryRun) {
         const provider = resolveProvider(step, agent);
         const model = resolveModel(step, agent);
+        const runnerAgent = resolveRunnerAgent(step, agent);
         const permissionMode = resolvePermissionMode(step, agent);
         const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
         timeline.setDone(timelineIndex, `dry-run · ${outputNames.join(', ')}`);
@@ -1444,6 +1500,7 @@ export async function runPipeline(filePath, opts = {}) {
           agent: step.agent,
           provider,
           model: model || '—',
+          runnerAgent: runnerAgent || '—',
           securityProfile: securityPolicy.profile,
           permissionMode: permissionMode || '—',
           status: 'dry-run',
@@ -1465,6 +1522,7 @@ export async function runPipeline(filePath, opts = {}) {
 
       const provider = resolveProvider(step, agent);
       const model = resolveModel(step, agent);
+      const runnerAgent = resolveRunnerAgent(step, agent);
       const permissionMode = resolvePermissionMode(step, agent);
       const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
       const systemPrompt = agent.prompt || agent.description;
@@ -1478,6 +1536,7 @@ export async function runPipeline(filePath, opts = {}) {
           totalSteps: pipeline.steps.length,
           provider,
           model,
+          runnerAgent,
           permissionMode,
           securityPolicy,
           resolvedInputs,
@@ -1503,6 +1562,7 @@ export async function runPipeline(filePath, opts = {}) {
             agent: step.agent,
             provider,
             model: model || '—',
+            runnerAgent: runnerAgent || '—',
             securityProfile: securityPolicy.profile,
             permissionMode: permissionMode || '—',
             status: 'skipped',
@@ -1518,6 +1578,7 @@ export async function runPipeline(filePath, opts = {}) {
             agent: step.agent,
             provider,
             model: model || '—',
+            runnerAgent: runnerAgent || '—',
             securityProfile: securityPolicy.profile,
             permissionMode: permissionMode || '—',
             status: 'failed',
@@ -1560,7 +1621,9 @@ export async function runPipeline(filePath, opts = {}) {
           systemPrompt,
           userPrompt: userMessage,
           model,
+          runnerAgent,
           permissionMode,
+          securityPolicy,
           verbose,
         });
       } catch (err) {
@@ -1568,6 +1631,7 @@ export async function runPipeline(filePath, opts = {}) {
           agent: step.agent,
           provider,
           model: model || '—',
+          runnerAgent: runnerAgent || '—',
           securityProfile: securityPolicy.profile,
           permissionMode: permissionMode || '—',
           status: 'failed',
@@ -1705,6 +1769,7 @@ export async function runPipeline(filePath, opts = {}) {
             agent: step.agent,
             provider,
             model: model || '—',
+            runnerAgent: runnerAgent || '—',
             securityProfile: securityPolicy.profile,
             permissionMode: permissionMode || '—',
             status: 'failed',
@@ -1724,6 +1789,7 @@ export async function runPipeline(filePath, opts = {}) {
         agent: step.agent,
         provider,
         model: model || '—',
+        runnerAgent: runnerAgent || '—',
         securityProfile: securityPolicy.profile,
         permissionMode: permissionMode || '—',
         status: 'done',
