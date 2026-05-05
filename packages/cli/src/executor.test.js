@@ -362,7 +362,7 @@ describe('runPipeline preflight', () => {
 
     const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
     expect(path.basename(latestRun)).toMatch(/^DEBUG-/);
-    const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'attempt-1', 'result.md'), 'utf8');
+    const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'result.md'), 'utf8');
     expect(artifact).toBe('debug override seen');
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.debugEvents).toEqual(expect.arrayContaining([
@@ -507,6 +507,78 @@ describe('runPipeline preflight', () => {
         phase: 'post-step',
         action: 'replay-start',
         editedInputs: ['text'],
+      }),
+    ]));
+  });
+
+  it('propagates debug $INPUT edits to downstream steps during the same run', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-input-override-propagation', {
+      name: 'debug-input-override-propagation',
+      nodes: [
+        {
+          id: 'input-request',
+          type: 'input',
+          data: {
+            label: 'Request',
+            subtype: 'text',
+            value: 'original input',
+          },
+        },
+      ],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: '$INPUT:input-request' },
+          outputs: { result: '$FILE:.singleton/output/first.md' },
+        },
+        {
+          agent: 'echo-next',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: '$INPUT:input-request' },
+          outputs: { result: '$FILE:.singleton/output/second.md' },
+        },
+      ],
+    });
+    let postCalls = 0;
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      shell: {
+        prompt: async () => 'original input',
+        log: () => {},
+        enterPipelineMode: () => {},
+        exitPipelineMode: () => {},
+        pipelineWidgets: null,
+      },
+      debugDecision: async () => 'continue',
+      debugPostDecision: async (summary) => {
+        postCalls += 1;
+        if (summary.agent === 'echo' && postCalls === 1) {
+          return {
+            action: 'replay',
+            inputs: { text: 'DEBUG_OVERRIDE' },
+          };
+        }
+        return 'continue';
+      },
+    })).resolves.toBeUndefined();
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const downstreamArtifact = await fs.readFile(path.join(latestRun, '02-echo-next', 'second.md'), 'utf8');
+    const pipelineJson = await fs.readFile(file, 'utf8');
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+
+    expect(downstreamArtifact).toBe('debug override seen');
+    expect(pipelineJson).toContain('original input');
+    expect(pipelineJson).not.toContain('DEBUG_OVERRIDE');
+    expect(manifest.debugEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        step: 'echo',
+        phase: 'post-step',
+        action: 'set-runtime-input-overrides',
+        inputIds: ['input-request'],
       }),
     ]));
   });

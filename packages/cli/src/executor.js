@@ -66,6 +66,24 @@ function parsePipeRef(spec) {
   return { ref, agentId, outName };
 }
 
+function parseInputRef(spec) {
+  if (typeof spec !== 'string' || !spec.startsWith('$INPUT:')) return null;
+  return spec.slice('$INPUT:'.length).trim();
+}
+
+function resolveDebugInputOverridesFromEdit(step, previousInputs, nextInputs, inputDefs = []) {
+  const overrides = {};
+  for (const [name, value] of Object.entries(nextInputs || {})) {
+    if (previousInputs?.[name] === value) continue;
+    const inputId = parseInputRef(step.inputs?.[name]);
+    if (!inputId) continue;
+    const def = inputDefs.find((item) => item.id === inputId);
+    if (def?.subtype === 'file') continue;
+    overrides[inputId] = value;
+  }
+  return overrides;
+}
+
 async function resolveInput(spec, { registry, cwd, inputValues = {}, inputDefs = [] }) {
   if (typeof spec !== 'string') return String(spec);
   if (spec.startsWith('$INPUT:')) {
@@ -269,6 +287,67 @@ async function writeRawOutputArtifact({ stepDir, step, text, reason, timeline })
   await fs.writeFile(rawPath, content);
   timeline.logMuted(`raw output saved: ${path.relative(path.dirname(stepDir), rawPath)}`);
   return rawPath;
+}
+
+async function moveFileIfExists(fromAbs, toAbs) {
+  try {
+    await fs.mkdir(path.dirname(toAbs), { recursive: true });
+    await fs.rename(fromAbs, toAbs);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    await fs.copyFile(fromAbs, toAbs);
+    await fs.rm(fromAbs, { force: true });
+    return true;
+  }
+}
+
+async function moveAttemptArtifactsToAttemptDir({ cwd, stepDir, attempt, writes, rawOutputPath }) {
+  if (!stepDir || attempt !== 1) {
+    return {
+      writes,
+      rawOutputPath,
+    };
+  }
+
+  const attemptDir = path.join(stepDir, `attempt-${attempt}`);
+  const movedWrites = [];
+  for (const entry of writes) {
+    if (!isInsidePath(entry.absPath, stepDir) || isInsidePath(entry.absPath, attemptDir)) {
+      movedWrites.push(entry);
+      continue;
+    }
+    const relInsideStep = path.relative(stepDir, entry.absPath);
+    if (!relInsideStep || relInsideStep.startsWith('..') || relInsideStep.split(path.sep)[0] === '.snapshot') {
+      movedWrites.push(entry);
+      continue;
+    }
+    const nextAbs = path.join(attemptDir, relInsideStep);
+    await moveFileIfExists(entry.absPath, nextAbs);
+    movedWrites.push({
+      ...entry,
+      absPath: nextAbs,
+      relPath: path.relative(cwd, nextAbs),
+      kind: path.relative(cwd, nextAbs).startsWith('.singleton' + path.sep) ? 'intermediate' : entry.kind,
+    });
+  }
+
+  let movedRawOutputPath = rawOutputPath;
+  if (rawOutputPath) {
+    const rawAbs = path.isAbsolute(rawOutputPath) ? rawOutputPath : path.join(cwd, rawOutputPath);
+    if (isInsidePath(rawAbs, stepDir) && !isInsidePath(rawAbs, attemptDir)) {
+      const relInsideStep = path.relative(stepDir, rawAbs);
+      const nextAbs = path.join(attemptDir, relInsideStep);
+      if (await moveFileIfExists(rawAbs, nextAbs)) {
+        movedRawOutputPath = path.relative(cwd, nextAbs);
+      }
+    }
+  }
+
+  return {
+    writes: movedWrites,
+    rawOutputPath: movedRawOutputPath,
+  };
 }
 
 function resolveProvider(step, agent) {
@@ -1642,6 +1721,7 @@ export async function runPipeline(filePath, opts = {}) {
   const verboseLog = [];
   const stats = [];
   const debugEvents = [];
+  const debugInputOverrides = {};
   let runError = null;
 
   try {
@@ -1771,8 +1851,11 @@ export async function runPipeline(filePath, opts = {}) {
       if (stepDir) await fs.mkdir(stepDir, { recursive: true });
 
       let resolvedInputs = {};
+      const runtimeInputValues = debug
+        ? { ...inputValues, ...debugInputOverrides }
+        : inputValues;
       for (const [name, spec] of Object.entries(step.inputs || {})) {
-        resolvedInputs[name] = await resolveInput(spec, { registry, cwd, inputValues, inputDefs });
+        resolvedInputs[name] = await resolveInput(spec, { registry, cwd, inputValues: runtimeInputValues, inputDefs });
       }
 
       const provider = resolveProvider(step, agent);
@@ -1783,7 +1866,7 @@ export async function runPipeline(filePath, opts = {}) {
       const systemPrompt = agent.prompt || agent.description;
       const workspaceInfoForAttempt = (attemptNumber) => {
         if (!stepDir) return null;
-        const attemptDir = debug ? path.join(stepDir, `attempt-${attemptNumber}`) : stepDir;
+        const attemptDir = debug && attemptNumber > 1 ? path.join(stepDir, `attempt-${attemptNumber}`) : stepDir;
         return { projectRoot: cwd, stepDirRel: path.relative(cwd, attemptDir) };
       };
       const workspaceInfo = workspaceInfoForAttempt(1);
@@ -1810,7 +1893,21 @@ export async function runPipeline(filePath, opts = {}) {
           debugEvents,
         });
 
-        resolvedInputs = decision.inputs || resolvedInputs;
+        if (decision.inputs) {
+          const overrides = resolveDebugInputOverridesFromEdit(step, resolvedInputs, decision.inputs, inputDefs);
+          for (const [id, value] of Object.entries(overrides)) {
+            debugInputOverrides[id] = value;
+          }
+          if (Object.keys(overrides).length) {
+            pushDebugEvent(debugEvents, {
+              step: step.agent,
+              phase: 'pre-step',
+              action: 'set-runtime-input-overrides',
+              inputIds: Object.keys(overrides),
+            });
+          }
+          resolvedInputs = decision.inputs;
+        }
 
         if (decision.action === 'skip') {
           for (const name of outputNames) {
@@ -1856,6 +1953,7 @@ export async function runPipeline(filePath, opts = {}) {
       let shouldReplay = false;
       let replayInputs = resolvedInputs;
       let replayInputOverride = null;
+      let replayBaseInputs = resolvedInputs;
       let totalAttemptSeconds = 0;
       let totalAttemptTurns = 0;
       let totalAttemptCost = 0;
@@ -1943,6 +2041,7 @@ export async function runPipeline(filePath, opts = {}) {
             else registry[key] = previousValue;
           }
           const editedInputs = new Set();
+          replayBaseInputs = replayInputs;
           if (replayInputOverride) {
             const nextInputs = { ...replayInputs };
             for (const [name, value] of Object.entries(replayInputOverride)) {
@@ -1963,6 +2062,19 @@ export async function runPipeline(filePath, opts = {}) {
               editedInputs,
             });
           }
+          const runtimeOverrides = resolveDebugInputOverridesFromEdit(step, replayBaseInputs, replayInputs, inputDefs);
+          for (const [id, value] of Object.entries(runtimeOverrides)) {
+            debugInputOverrides[id] = value;
+          }
+          if (Object.keys(runtimeOverrides).length) {
+            pushDebugEvent(debugEvents, {
+              step: step.agent,
+              phase: 'post-step',
+              action: 'set-runtime-input-overrides',
+              inputIds: Object.keys(runtimeOverrides),
+              attempt,
+            });
+          }
           if (editedInputs.size) {
             logDebugPromptPreview({
               systemPrompt,
@@ -1980,7 +2092,7 @@ export async function runPipeline(filePath, opts = {}) {
           });
         }
 
-        const attemptDir = debug && stepDir ? path.join(stepDir, `attempt-${attempt}`) : stepDir;
+        const attemptDir = debug && stepDir && attempt > 1 ? path.join(stepDir, `attempt-${attempt}`) : stepDir;
         if (attemptDir) await fs.mkdir(attemptDir, { recursive: true });
         const attemptWorkspaceInfo = workspaceInfoForAttempt(attempt);
         const userMessage = buildUserMessage(replayInputs, outputNames, attemptWorkspaceInfo, securityPolicy);
@@ -2228,7 +2340,14 @@ export async function runPipeline(filePath, opts = {}) {
               `Replay limit reached for step "${step.agent}" (${maxDebugReplays} per step).`
             );
           }
-          finalAttempt = { stepChanges, stepWrites: attemptWrites };
+          const movedAttempt = await moveAttemptArtifactsToAttemptDir({
+            cwd,
+            stepDir,
+            attempt,
+            writes: attemptWrites,
+            rawOutputPath: rawOutputPath ? path.relative(cwd, rawOutputPath) : null,
+          });
+          finalAttempt = { stepChanges, stepWrites: movedAttempt.writes };
           fileWrites.splice(stepWritesStart);
           replayInputOverride = typeof postDecision === 'object' && postDecision?.inputs
             ? postDecision.inputs

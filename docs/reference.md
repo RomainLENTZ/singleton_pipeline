@@ -653,11 +653,12 @@ Replay has deliberate limits:
 - external side effects such as commits, pushes, pull requests, shell state, or network calls are not rolled back
 - if restoration fails, Singleton aborts the pipeline instead of continuing from a mixed filesystem state
 
-Debug step artifacts are written under attempt folders:
+Debug step artifacts are written at the step root by default. When a step is replayed, Singleton moves the first attempt into `attempt-1` and writes the next attempts into `attempt-2`, `attempt-3`, etc.:
 
 ```txt
-.singleton/runs/DEBUG-20260501-151230-my-pipeline/01-agent-id/attempt-1/
-.singleton/runs/DEBUG-20260501-151230-my-pipeline/01-agent-id/attempt-2/
+.singleton/runs/DEBUG-20260501-151230-my-pipeline/01-agent-id/report.md
+.singleton/runs/DEBUG-20260501-151230-my-pipeline/02-agent-id/attempt-1/report.md
+.singleton/runs/DEBUG-20260501-151230-my-pipeline/02-agent-id/attempt-2/report.md
 ```
 
 During debug prompts, the pipeline log remains scrollable with arrow keys, page up/down, home, and end. The timeline marks the current step as `Paused` until you choose an action.

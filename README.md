@@ -30,7 +30,7 @@ This beta focuses on multi-provider execution, Copilot support, inspection, and 
 - Debug inspect shows the full prompt that will be sent to the provider.
 - Debug edit lets you override resolved step inputs for the current run only.
 - Debug replay can rerun a step with adjusted inputs; project file changes from the previous attempt are restored first.
-- Debug step artifacts are stored per attempt under `attempt-1`, `attempt-2`, etc.
+- Debug replay stores repeated step artifacts under `attempt-1`, `attempt-2`, etc.; steps without replay keep artifacts at the step root.
 - Debug replay is capped per step and only restores detected project file changes, not external side effects.
 - Edited inputs are marked in prompt preview with `debug-edited="true"` to make prompt priority easier to inspect.
 - Debug decisions are recorded in `run-manifest.json` as lightweight `debugEvents`.
