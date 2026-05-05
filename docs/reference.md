@@ -624,7 +624,9 @@ Post-step actions:
 | ------ | ----- | -------- |
 | `continue` | `c` | continue to the next step |
 | `output` | `o` | print the parsed outputs in full |
+| `raw output` | `r` | print the raw provider response before Singleton parsed it |
 | `diff` | `d` | print git diff previews for detected project changes |
+| `replay` | `p` | restore project file changes from the previous attempt, optionally edit inputs, and rerun the same step |
 | `abort` | `a` | stop the pipeline after the current step |
 
 Edited inputs are runtime-only:
@@ -635,6 +637,28 @@ Edited inputs are runtime-only:
 - Singleton warns that editing one input may not override other inputs or the agent prompt
 - after editing, Singleton can immediately show the final prompt
 - edited input tags are marked with `debug-edited="true"` in prompt preview
+
+Replay is scoped to the current step:
+
+- project files changed by the previous attempt are restored before the next attempt
+- intermediate run artifacts from previous attempts are kept for traceability
+- the step output registry is reset before rerun so downstream `$PIPE` references use the final attempt
+- the final recap and manifest report the final attempt, plus an `attempts` count
+- duration, turns, and cost are cumulative across attempts
+- replay is capped at 3 replays per step by default
+
+Replay has deliberate limits:
+
+- skipped folders such as `.git`, `node_modules`, `dist`, `build`, `.next`, `.cache`, and `coverage` are not restored
+- external side effects such as commits, pushes, pull requests, shell state, or network calls are not rolled back
+- if restoration fails, Singleton aborts the pipeline instead of continuing from a mixed filesystem state
+
+Debug step artifacts are written under attempt folders:
+
+```txt
+.singleton/runs/DEBUG-20260501-151230-my-pipeline/01-agent-id/attempt-1/
+.singleton/runs/DEBUG-20260501-151230-my-pipeline/01-agent-id/attempt-2/
+```
 
 During debug prompts, the pipeline log remains scrollable with arrow keys, page up/down, home, and end. The timeline marks the current step as `Paused` until you choose an action.
 
@@ -660,6 +684,7 @@ When structured output parsing fails, for example invalid `$FILES` JSON, Singlet
 
 ```txt
 .singleton/runs/<run-id>/<step>/raw-output.md
+.singleton/runs/<debug-run-id>/<step>/attempt-1/raw-output.md
 ```
 
 ## Deliverables vs intermediates

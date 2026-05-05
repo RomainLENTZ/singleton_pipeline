@@ -18,6 +18,12 @@ vi.mock('./runners/index.js', () => ({
         await fsMock.mkdir(pathMock.join(cwd, 'src'), { recursive: true });
         await fsMock.writeFile(pathMock.join(cwd, 'src', 'unexpected.js'), 'export const changed = true;\n');
       }
+      if (userPrompt.includes('WRITE_LARGE_PROJECT_FILE')) {
+        const fsMock = await import('node:fs/promises');
+        const pathMock = await import('node:path');
+        await fsMock.mkdir(pathMock.join(cwd, 'src'), { recursive: true });
+        await fsMock.writeFile(pathMock.join(cwd, 'src', 'large.txt'), 'changed large file\n');
+      }
       if (userPrompt.includes('WRITE_IDEA_FILE')) {
         const fsMock = await import('node:fs/promises');
         const pathMock = await import('node:path');
@@ -30,9 +36,12 @@ vi.mock('./runners/index.js', () => ({
           metadata: {},
         };
       }
+      const metadata = userPrompt.includes('DEBUG_OVERRIDE')
+        ? { turns: 3, costUsd: 0.5 }
+        : { turns: 2, costUsd: 0.25 };
       return {
         text: userPrompt.includes('DEBUG_OVERRIDE') ? 'debug override seen' : 'generated text',
-        metadata: {},
+        metadata,
       };
     },
   }),
@@ -353,7 +362,7 @@ describe('runPipeline preflight', () => {
 
     const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
     expect(path.basename(latestRun)).toMatch(/^DEBUG-/);
-    const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'result.md'), 'utf8');
+    const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'attempt-1', 'result.md'), 'utf8');
     expect(artifact).toBe('debug override seen');
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.debugEvents).toEqual(expect.arrayContaining([
@@ -401,6 +410,218 @@ describe('runPipeline preflight', () => {
     expect(manifest.stats.at(-1)).toMatchObject({
       agent: 'echo',
       status: 'failed',
+    });
+  });
+
+  it('records parsed output warnings in debug run manifests', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-output-warnings', {
+      name: 'debug-output-warnings',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: 'normal input' },
+          outputs: {
+            result: '$FILE:.singleton/output/result.md',
+            review: '$FILE:.singleton/output/review.md',
+          },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => 'continue',
+      debugPostDecision: async () => 'continue',
+    })).resolves.toBeUndefined();
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    const stepStats = manifest.stats.at(-1);
+    expect(stepStats.outputWarnings).toEqual([
+      'output "result" is empty',
+      'output "review" is empty',
+    ]);
+    expect(stepStats.parsedOutputs).toEqual([
+      { name: 'result', found: false, chars: 0, lines: 0 },
+      { name: 'review', found: false, chars: 0, lines: 0 },
+    ]);
+    expect(stepStats.rawOutputPath).toMatch(/raw-output\.md$/);
+    const raw = await fs.readFile(path.join(tmpRoot, stepStats.rawOutputPath), 'utf8');
+    expect(raw).toContain('Output warning');
+    expect(raw).toContain('generated text');
+  });
+
+  it('can replay a debug step with updated inputs', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-replay-step', {
+      name: 'debug-replay-step',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: 'original input' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+    let postCalls = 0;
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => 'continue',
+      debugPostDecision: async () => {
+        postCalls += 1;
+        if (postCalls === 1) {
+          return {
+            action: 'replay',
+            inputs: { text: 'DEBUG_OVERRIDE' },
+          };
+        }
+        return 'continue';
+      },
+    })).resolves.toBeUndefined();
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'attempt-2', 'result.md'), 'utf8');
+    expect(artifact).toBe('debug override seen');
+    await expect(fs.access(path.join(latestRun, '01-echo', 'attempt-1', 'result.md'))).resolves.toBeUndefined();
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.stats.at(-1)).toMatchObject({
+      agent: 'echo',
+      attempts: 2,
+      turns: 5,
+      cost: 0.75,
+    });
+    expect(manifest.debugEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        step: 'echo',
+        phase: 'post-step',
+        action: 'replay',
+      }),
+      expect.objectContaining({
+        step: 'echo',
+        phase: 'post-step',
+        action: 'replay-start',
+        editedInputs: ['text'],
+      }),
+    ]));
+  });
+
+  it('stops debug replay after the configured per-step limit', async () => {
+    const file = await writePipeline(tmpRoot, 'debug-replay-limit', {
+      name: 'debug-replay-limit',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: 'original input' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      maxDebugReplays: 1,
+      debugDecision: async () => 'continue',
+      debugPostDecision: async () => ({
+        action: 'replay',
+        inputs: { text: 'DEBUG_OVERRIDE' },
+      }),
+    })).rejects.toThrow(/Replay limit reached/);
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.status).toBe('failed');
+    expect(manifest.stats.at(-1)).toMatchObject({
+      agent: 'echo',
+      status: 'failed',
+      attempts: 2,
+    });
+  });
+
+  it('restores project file changes before replaying a debug step', async () => {
+    await fs.writeFile(path.join(tmpRoot, 'src', 'unexpected.js'), 'export const changed = false;\n');
+    const file = await writePipeline(tmpRoot, 'debug-replay-restore', {
+      name: 'debug-replay-restore',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          security_profile: 'workspace-write',
+          inputs: { text: 'WRITE_PROJECT_FILE' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+    let postCalls = 0;
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => 'continue',
+      debugPostDecision: async () => {
+        postCalls += 1;
+        if (postCalls === 1) {
+          return {
+            action: 'replay',
+            inputs: { text: 'DEBUG_OVERRIDE' },
+          };
+        }
+        return 'continue';
+      },
+    })).resolves.toBeUndefined();
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const restoredProjectFile = await fs.readFile(path.join(tmpRoot, 'src', 'unexpected.js'), 'utf8');
+    const finalArtifact = await fs.readFile(path.join(latestRun, '01-echo', 'attempt-2', 'result.md'), 'utf8');
+
+    expect(restoredProjectFile).toBe('export const changed = false;\n');
+    expect(finalArtifact).toBe('debug override seen');
+    await expect(fs.access(path.join(latestRun, '01-echo', 'attempt-1', 'result.md'))).resolves.toBeUndefined();
+  });
+
+  it('aborts replay when a changed original file was excluded from the snapshot', async () => {
+    await fs.writeFile(path.join(tmpRoot, 'src', 'large.txt'), `${'x'.repeat(1024 * 1024 + 1)}\n`);
+    const file = await writePipeline(tmpRoot, 'debug-replay-incomplete-restore', {
+      name: 'debug-replay-incomplete-restore',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          security_profile: 'workspace-write',
+          inputs: { text: 'WRITE_LARGE_PROJECT_FILE' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, {
+      quiet: true,
+      debug: true,
+      debugDecision: async () => 'continue',
+      debugPostDecision: async () => ({
+        action: 'replay',
+        inputs: { text: 'DEBUG_OVERRIDE' },
+      }),
+    })).rejects.toThrow(/Replay restore incomplete/);
+
+    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.status).toBe('failed');
+    expect(manifest.error.message).toMatch(/src\/large\.txt/);
+    expect(manifest.stats.at(-1)).toMatchObject({
+      agent: 'echo',
+      status: 'failed',
+      attempts: 2,
     });
   });
 

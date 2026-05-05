@@ -29,10 +29,13 @@ This beta focuses on multi-provider execution, Copilot support, inspection, and 
 - Debug also pauses after each step to inspect parsed outputs, written files, detected changes, and diffs before continuing.
 - Debug inspect shows the full prompt that will be sent to the provider.
 - Debug edit lets you override resolved step inputs for the current run only.
+- Debug replay can rerun a step with adjusted inputs; project file changes from the previous attempt are restored first.
+- Debug step artifacts are stored per attempt under `attempt-1`, `attempt-2`, etc.
+- Debug replay is capped per step and only restores detected project file changes, not external side effects.
 - Edited inputs are marked in prompt preview with `debug-edited="true"` to make prompt priority easier to inspect.
 - Debug decisions are recorded in `run-manifest.json` as lightweight `debugEvents`.
 - Debug runs are stored with a `DEBUG-` prefix in `.singleton/runs/`.
-- Raw provider output is saved as `raw-output.md` when structured output parsing fails.
+- Raw provider output can be inspected during debug and is saved as `raw-output.md` when structured output parsing fails or debug detects output warnings.
 - Run manifests are written even when a pipeline fails, so partial runs remain inspectable.
 - `/commit-last` previews files, applies security exclusions, and asks for confirmation.
 
@@ -93,7 +96,7 @@ Steps wire to each other through four references:
 
 Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass validates inputs, files, providers, references, and security policies before any LLM is called. Each run lands in `.singleton/runs/<id>/` with a manifest, even when the run fails; `/commit-last` stages only approved project deliverables (never `.singleton` itself).
 
-Debug mode adds an interactive checkpoint before each agent. It is designed for inspecting what the agent will receive, testing alternate specs, or stopping a risky step before it runs. Any edited input is temporary and does not mutate the pipeline JSON.
+Debug mode adds interactive checkpoints before and after each agent. It is designed for inspecting what the agent will receive, testing alternate specs, reviewing outputs, or replaying one step with adjusted inputs. Any edited input is temporary and does not mutate the pipeline JSON.
 
 Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
 

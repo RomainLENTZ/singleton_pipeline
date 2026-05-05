@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { spawn } from 'node:child_process';
@@ -239,6 +240,19 @@ function parseOutputs(text, outputNames) {
   return result;
 }
 
+function summarizeParsedOutputs(parsed, outputNames) {
+  return outputNames.map((name) => {
+    const value = String(parsed[name] || '');
+    const trimmed = value.trim();
+    return {
+      name,
+      found: Boolean(trimmed),
+      chars: value.length,
+      lines: trimmed ? trimmed.split('\n').length : 0,
+    };
+  });
+}
+
 async function writeRawOutputArtifact({ stepDir, step, text, reason, timeline }) {
   if (!stepDir) return null;
   const rawPath = path.join(stepDir, 'raw-output.md');
@@ -364,7 +378,9 @@ const DEBUG_POST_ACTION_PROMPT = [
   `{#FFFFFF-fg}{bold}Debug output{/}`,
   `{${C.mint}-fg}▶ continue{/}{${C.ghost}-fg}(c){/}`,
   `{${C.blue}-fg}? output{/}{${C.ghost}-fg}(o){/}`,
+  `{${C.violet}-fg}raw output{/}{${C.ghost}-fg}(r){/}`,
   `{${C.peach}-fg}± diff{/}{${C.ghost}-fg}(d){/}`,
+  `{${C.violet}-fg}↻ replay{/}{${C.ghost}-fg}(p){/}`,
   `{${C.salmon}-fg}■ abort{/}{${C.ghost}-fg}(a){/}`,
 ].join(` {${C.ghost}-fg}·{/} `);
 
@@ -372,9 +388,13 @@ const DEBUG_POST_ACTION_HELP = [
   `{#FFFFFF-fg}Choose{/}`,
   `{${C.mint}-fg}▶ continue{/}`,
   `{${C.blue}-fg}? output{/}`,
+  `{${C.violet}-fg}raw output{/}`,
   `{${C.peach}-fg}± diff{/}`,
+  `{${C.violet}-fg}↻ replay{/}`,
   `{${C.salmon}-fg}■ abort{/}`,
 ].join(` {${C.ghost}-fg}·{/} `);
+
+const DEFAULT_MAX_DEBUG_REPLAYS = 3;
 
 function logDebugSection(title, timeline) {
   const width = 72;
@@ -417,6 +437,10 @@ function debugValue(value, kind = 'text') {
 
 function debugLine(label, value, kind = 'text') {
   return `${debugToken.key(label)} ${debugValue(value, kind)}`;
+}
+
+function isPromptCancelled(value) {
+  return value === '__SINGLETON_ESC__';
 }
 
 function logDebugInputs(resolvedInputs, timeline) {
@@ -492,8 +516,15 @@ function validateParsedOutputs(parsed, outputNames) {
 
 function logDebugOutputs(parsed, outputNames, timeline) {
   logDebugSection('Debug parsed outputs', timeline);
-  for (const name of outputNames) {
-    timeline.logMuted(debugLine(name, `${String(parsed[name] || '').length} chars`, 'identity'));
+  const summaries = summarizeParsedOutputs(parsed, outputNames);
+  for (const summary of summaries) {
+    const status = summary.found ? debugToken.identity('found') : debugToken.policy('missing');
+    timeline.logMuted(
+      `${debugToken.key(summary.name)} ${status} ` +
+      `${debugToken.muted('·')} ${debugValue(`${summary.chars} chars`, 'identity')} ` +
+      `${debugToken.muted('·')} ${debugValue(`${summary.lines} lines`, 'identity')}`
+    );
+    const name = summary.name;
     const lines = String(parsed[name] || '').split('\n');
     for (const line of lines) {
       timeline.logMuted(`  ${debugPromptTextLine(line)}`);
@@ -538,6 +569,10 @@ async function promptDebugPostStepDecision({
   stepWrites,
   stepChanges,
   outputWarnings,
+  rawText,
+  rawOutputPath,
+  attempt,
+  maxDebugReplays,
   cwd,
   timeline,
   shell,
@@ -548,13 +583,23 @@ async function promptDebugPostStepDecision({
   const summary = {
     agent: step.agent,
     outputs: outputNames,
+    parsedOutputs: summarizeParsedOutputs(parsed, outputNames),
     outputWarnings,
+    rawOutputPath: rawOutputPath || null,
     writtenFiles: stepWrites.map((entry) => entry.relPath),
     changedFiles: stepChanges.map((entry) => entry.relPath),
   };
 
   if (decisionFn) {
     const decision = await decisionFn(summary);
+    if (typeof decision === 'object' && decision) {
+      const action = String(decision.action || 'continue').trim().toLowerCase() || 'continue';
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action, ...summary });
+      return {
+        action,
+        inputs: decision.inputs && typeof decision.inputs === 'object' ? decision.inputs : null,
+      };
+    }
     const action = String(decision || 'continue').trim().toLowerCase() || 'continue';
     pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action, ...summary });
     return action;
@@ -578,7 +623,11 @@ async function promptDebugPostStepDecision({
   while (true) {
     const raw = shell
       ? await shell.prompt(DEBUG_POST_ACTION_PROMPT)
-      : await input({ message: 'Debug output: continue, output, diff, or abort? (c/o/d/a)', default: 'c' });
+      : await input({ message: 'Debug output: continue, output, raw output, diff, replay, or abort? (c/o/r/d/p/a)', default: 'c' });
+    if (isPromptCancelled(raw)) {
+      timeline.logMuted(`${debugToken.muted('Cancelled. Back to debug output menu.')}`);
+      continue;
+    }
     const answer = String(raw || '').trim().toLowerCase();
     if (!answer || answer === 'c' || answer === 'continue') {
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'continue', ...summary });
@@ -593,10 +642,39 @@ async function promptDebugPostStepDecision({
       logDebugOutputs(parsed, outputNames, timeline);
       continue;
     }
+    if (answer === 'r' || answer === 'raw' || answer === 'raw output') {
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-raw-output', ...summary });
+      logDebugSection('Debug raw output', timeline);
+      if (rawOutputPath) timeline.logMuted(`${debugToken.key('saved')} ${debugValue(rawOutputPath, 'path')}`);
+      const lines = String(rawText || '').split('\n');
+      for (const line of lines.slice(0, 120)) timeline.logMuted(`  ${debugPromptTextLine(line)}`);
+      if (lines.length > 120) timeline.logMuted(`${debugToken.muted(`... ${lines.length - 120} more line(s)`)}`);
+      continue;
+    }
     if (answer === 'd' || answer === 'diff') {
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-diff', ...summary });
       await logDebugDiffs({ changes: stepChanges, writes: stepWrites, cwd, timeline });
       continue;
+    }
+    if (answer === 'p' || answer === 'replay' || answer === 'retry') {
+      const usedReplays = Math.max(0, Number(attempt || 1) - 1);
+      if (usedReplays >= maxDebugReplays) {
+        timeline.logMuted(`${debugToken.policy(`Replay limit reached (${maxDebugReplays} per step).`)}`);
+        continue;
+      }
+      if (stepWrites.length || stepChanges.length) {
+        logDebugSection('Replay soft warning', timeline);
+        timeline.logMuted(`${debugToken.policy('Replay restores detected project file changes only.')}`);
+        const written = stepWrites.map((entry) => entry.relPath);
+        const changed = stepChanges.map((entry) => entry.relPath);
+        timeline.logMuted(`${debugToken.key('already written')} ${formatDebugList(written)}`);
+        timeline.logMuted(`${debugToken.key('already changed')} ${formatDebugList(changed)}`);
+        timeline.logMuted(`${debugToken.muted('Previous run artifacts stay in their attempt folder for traceability.')}`);
+        timeline.logMuted(`${debugToken.muted('Skipped folders such as .git, node_modules, dist, build, and .next are not restored.')}`);
+        timeline.logMuted(`${debugToken.muted('External side effects such as commits, pushes, PRs, shell state, or network calls are not rolled back.')}`);
+      }
+      pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'replay', ...summary });
+      return 'replay';
     }
     timeline.logMuted(DEBUG_POST_ACTION_HELP);
   }
@@ -620,6 +698,10 @@ async function editDebugInputs({ resolvedInputs, shell, timeline, step, debugEve
     const rawName = shell
       ? await shell.prompt(`Input to edit (${names.join(', ')})`)
       : await input({ message: `Input to edit (${names.join(', ')})` });
+    if (isPromptCancelled(rawName)) {
+      timeline.logMuted(`${debugToken.muted('Edit cancelled. Back to debug menu.')}`);
+      return nextInputs;
+    }
     const name = String(rawName || '').trim();
     if (!name) return nextInputs;
     if (!Object.hasOwn(nextInputs, name)) {
@@ -632,6 +714,10 @@ async function editDebugInputs({ resolvedInputs, shell, timeline, step, debugEve
     const value = shell
       ? await shell.prompt(`New value for ${name}`)
       : await input({ message: `New value for ${name}`, default: String(nextInputs[name] || '') });
+    if (isPromptCancelled(value)) {
+      timeline.logMuted(`${debugToken.muted('Value edit cancelled. Back to input selection.')}`);
+      continue;
+    }
     nextInputs[name] = String(value || '');
     if (editedInputs) editedInputs.add(name);
     pushDebugEvent(debugEvents, {
@@ -724,6 +810,10 @@ async function promptDebugStepDecision({
     const raw = shell
       ? await shell.prompt(DEBUG_ACTION_PROMPT)
       : await input({ message: 'Debug: continue, inspect, edit, skip, or abort? (c/i/e/s/a)', default: 'c' });
+    if (isPromptCancelled(raw)) {
+      timeline.logMuted(`${debugToken.muted('Cancelled. Back to debug action menu.')}`);
+      continue;
+    }
     const answer = String(raw || '').trim().toLowerCase();
     if (!answer || answer === 'c' || answer === 'continue') {
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'continue', ...summary });
@@ -755,6 +845,10 @@ async function promptDebugStepDecision({
         const inspectAnswer = shell
           ? await shell.prompt(`{#FFFFFF-fg}Inspect final prompt now?{/} {${C.mint}-fg}yes{/}{${C.ghost}-fg}(y){/} {${C.ghost}-fg}or{/} {${C.ghost}-fg}no(n){/}`)
           : await input({ message: 'Inspect final prompt now? (y/N)', default: 'n' });
+        if (isPromptCancelled(inspectAnswer)) {
+          timeline.logMuted(`${debugToken.muted('Inspect prompt cancelled.')}`);
+          continue;
+        }
         if (['y', 'yes'].includes(String(inspectAnswer || '').trim().toLowerCase())) {
           pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'inspect-prompt-after-edit', editedInputs: [...editedInputs], ...summary });
           logDebugPromptPreview({
@@ -1047,6 +1141,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
     model: s.model || '—',
     policy: formatPolicyLabel({ securityProfile: s.securityProfile, permissionMode: s.permissionMode }),
     status: s.status,
+    attempts: s.attempts && s.attempts > 1 ? String(s.attempts) : '—',
     time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
     turns: formatTurns(s.turns),
     cost: formatCost(s.cost),
@@ -1059,6 +1154,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
     model: '—',
     policy: '—',
     status: runStatus || (dryRun ? 'dry-run' : 'done'),
+    attempts: '—',
     time: formatSeconds(totalSeconds),
     turns: formatTurns(totalTurns),
     cost: formatCost(totalCost),
@@ -1072,6 +1168,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
     model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
     policy: Math.max(6, ...allRows.map((r) => visibleLength(r.policy))),
     status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
+    attempts: Math.max(8, ...allRows.map((r) => visibleLength(r.attempts))),
     time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
     turns: Math.max(5, ...allRows.map((r) => visibleLength(r.turns))),
     cost: Math.max(4, ...allRows.map((r) => visibleLength(r.cost))),
@@ -1084,6 +1181,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
     '─'.repeat(widths.model + 2),
     '─'.repeat(widths.policy + 2),
     '─'.repeat(widths.status + 2),
+    '─'.repeat(widths.attempts + 2),
     '─'.repeat(widths.time + 2),
     '─'.repeat(widths.turns + 2),
     '─'.repeat(widths.cost + 2),
@@ -1097,6 +1195,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
       ` ${padVisible(r.model, widths.model)} `,
       ` ${padVisible(r.policy, widths.policy)} `,
       ` ${padVisible(r.status, widths.status)} `,
+      ` ${padVisible(r.attempts, widths.attempts, 'right')} `,
       ` ${padVisible(r.time, widths.time, 'right')} `,
       ` ${padVisible(r.turns, widths.turns, 'right')} `,
       ` ${padVisible(r.cost, widths.cost, 'right')} `,
@@ -1107,7 +1206,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
     '',
     '{bold}Summary{/}',
     '',
-    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', policy: 'Policy', status: 'Status', time: 'Time', turns: 'Turns', cost: 'Cost' }),
+    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', policy: 'Policy', status: 'Status', attempts: 'Attempts', time: 'Time', turns: 'Turns', cost: 'Cost' }),
     hr,
     ...rows.map(row),
     hr,
@@ -1160,6 +1259,131 @@ async function snapshotProjectFiles(root, rel = '', out = new Map()) {
   return out;
 }
 
+const SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
+const SNAPSHOT_BINARY_PROBE_BYTES = 8192;
+
+async function detectGitRepo(cwd) {
+  try {
+    await runCommand('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function gitFilterIgnoredPaths(root, relPaths) {
+  if (!relPaths.length) return new Set();
+  const posix = relPaths.map((p) => p.split(path.sep).join('/'));
+  const ignored = new Set();
+  await new Promise((resolve) => {
+    const child = spawn('git', ['check-ignore', '--stdin'], {
+      cwd: root,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    let stdout = '';
+    child.stdout.on('data', (d) => (stdout += d.toString()));
+    child.on('error', () => resolve());
+    child.on('close', () => {
+      for (const line of stdout.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) ignored.add(trimmed);
+      }
+      resolve();
+    });
+    child.stdin.write(posix.join('\n'));
+    child.stdin.end();
+  });
+  if (!ignored.size) return new Set();
+  const result = new Set();
+  for (let i = 0; i < relPaths.length; i++) {
+    if (ignored.has(posix[i])) result.add(relPaths[i]);
+  }
+  return result;
+}
+
+async function isProbablyBinaryFile(absPath) {
+  let fd;
+  try {
+    fd = await fs.open(absPath, 'r');
+    const buf = Buffer.alloc(SNAPSHOT_BINARY_PROBE_BYTES);
+    const { bytesRead } = await fd.read(buf, 0, SNAPSHOT_BINARY_PROBE_BYTES, 0);
+    for (let i = 0; i < bytesRead; i++) {
+      if (buf[i] === 0) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd) await fd.close().catch(() => {});
+  }
+}
+
+async function collectSnapshotCandidates(root, rel = '', out = []) {
+  const abs = path.join(root, rel);
+  const entries = await fs.readdir(abs, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (SNAPSHOT_SKIP_DIRS.has(entry.name)) continue;
+      await collectSnapshotCandidates(root, path.join(rel, entry.name), out);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const entryRel = path.join(rel, entry.name);
+    const entryAbs = path.join(root, entryRel);
+    let size = 0;
+    try {
+      const stat = await fs.stat(entryAbs);
+      size = stat.size;
+    } catch {
+      continue;
+    }
+    out.push({ relPath: entryRel, absPath: entryAbs, size });
+  }
+  return out;
+}
+
+async function createStepSnapshot({ root, snapshotDir, gitRepo, maxFileBytes = SNAPSHOT_MAX_FILE_BYTES }) {
+  await fs.mkdir(snapshotDir, { recursive: true });
+  const candidates = await collectSnapshotCandidates(root);
+  const ignored = gitRepo
+    ? await gitFilterIgnoredPaths(root, candidates.map((c) => c.relPath))
+    : new Set();
+
+  const captured = new Set();
+  const skippedLarge = [];
+  const skippedBinary = [];
+  const skippedIgnored = [];
+
+  for (const { relPath, absPath, size } of candidates) {
+    if (ignored.has(relPath)) {
+      skippedIgnored.push(relPath);
+      continue;
+    }
+    if (size > maxFileBytes) {
+      skippedLarge.push(relPath);
+      continue;
+    }
+    if (await isProbablyBinaryFile(absPath)) {
+      skippedBinary.push(relPath);
+      continue;
+    }
+    const dest = path.join(snapshotDir, relPath);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    try {
+      await fs.copyFile(absPath, dest, fsConstants.COPYFILE_FICLONE);
+    } catch {
+      try {
+        await fs.copyFile(absPath, dest);
+      } catch {
+        continue;
+      }
+    }
+    captured.add(relPath);
+  }
+
+  return { snapshotDir, captured, skippedLarge, skippedBinary, skippedIgnored };
+}
+
 function detectSnapshotChanges(before, after, root) {
   const changed = [];
   const paths = new Set([...before.keys(), ...after.keys()]);
@@ -1174,6 +1398,29 @@ function detectSnapshotChanges(before, after, root) {
     });
   }
   return changed;
+}
+
+async function restoreStepSnapshot({ root, snapshot, originalPaths, changes }) {
+  const restored = [];
+  const removed = [];
+  const skipped = [];
+  for (const change of changes) {
+    const relPath = change?.relPath;
+    if (!relPath) continue;
+    const absPath = path.join(root, relPath);
+    if (snapshot.captured.has(relPath)) {
+      const src = path.join(snapshot.snapshotDir, relPath);
+      await fs.mkdir(path.dirname(absPath), { recursive: true });
+      await fs.copyFile(src, absPath);
+      restored.push(relPath);
+    } else if (originalPaths.has(relPath)) {
+      skipped.push(relPath);
+    } else {
+      await fs.rm(absPath, { recursive: true, force: true });
+      removed.push(relPath);
+    }
+  }
+  return { restored, removed, skipped };
 }
 
 function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
@@ -1326,6 +1573,10 @@ async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrite
       seconds: s.seconds,
       turns: s.turns,
       cost: s.cost,
+      attempts: s.attempts || 1,
+      outputWarnings: s.outputWarnings || [],
+      parsedOutputs: s.parsedOutputs || [],
+      rawOutputPath: s.rawOutputPath || null,
     })),
     debugEvents,
   };
@@ -1343,9 +1594,13 @@ export async function runPipeline(filePath, opts = {}) {
   const debug   = !!opts.debug;
   const shell   = opts.shell || null;
   const quiet   = !!opts.quiet;
+  const maxDebugReplays = Number.isInteger(opts.maxDebugReplays)
+    ? Math.max(0, opts.maxDebugReplays)
+    : DEFAULT_MAX_DEBUG_REPLAYS;
   const securityConfig = await loadProjectSecurityConfig(cwd);
   const beforeSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
   let currentSnapshot = beforeSnapshot;
+  const isGitRepo = !dryRun && await detectGitRepo(cwd);
 
   // Versioned workspace for this run — intermediate artifacts land here.
   const now = new Date();
@@ -1526,7 +1781,12 @@ export async function runPipeline(filePath, opts = {}) {
       const permissionMode = resolvePermissionMode(step, agent);
       const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
       const systemPrompt = agent.prompt || agent.description;
-      const workspaceInfo = stepDir ? { projectRoot: cwd, stepDirRel: path.relative(cwd, stepDir) } : null;
+      const workspaceInfoForAttempt = (attemptNumber) => {
+        if (!stepDir) return null;
+        const attemptDir = debug ? path.join(stepDir, `attempt-${attemptNumber}`) : stepDir;
+        return { projectRoot: cwd, stepDirRel: path.relative(cwd, attemptDir) };
+      };
+      const workspaceInfo = workspaceInfoForAttempt(1);
 
       if (debug) {
         timeline.setPaused(timelineIndex, 'debug review');
@@ -1590,61 +1850,199 @@ export async function runPipeline(filePath, opts = {}) {
         }
       }
 
-      const userMessage = buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPolicy);
-
-      timeline.setRunning(
-        timelineIndex,
-        formatStepRuntimeMeta({
-          provider,
-          model: model || '',
-          permissionMode,
-          securityProfile: securityPolicy.profile,
+      const runner = getRunner(provider);
+      let attempt = 1;
+      let finalAttempt = null;
+      let shouldReplay = false;
+      let replayInputs = resolvedInputs;
+      let replayInputOverride = null;
+      let totalAttemptSeconds = 0;
+      let totalAttemptTurns = 0;
+      let totalAttemptCost = 0;
+      const stepRegistrySnapshot = new Map(
+        outputNames.map((name) => {
+          const key = `${step.agent}.${name}`;
+          return [key, Object.prototype.hasOwnProperty.call(registry, key) ? registry[key] : undefined];
         })
       );
-      const runner = getRunner(provider);
-
-      if (verbose) {
-        timeline.log(`── system prompt ──`);
-        for (const l of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(l);
-        timeline.log(`── user message ──`);
-        for (const l of userMessage.split('\n').slice(0, 12)) timeline.logMuted(l);
+      const stepSnapshotDir = debug && stepDir ? path.join(stepDir, '.snapshot') : null;
+      const stepSnapshot = stepSnapshotDir
+        ? await createStepSnapshot({ root: cwd, snapshotDir: stepSnapshotDir, gitRepo: isGitRepo })
+        : null;
+      if (stepSnapshot && (stepSnapshot.skippedLarge.length || stepSnapshot.skippedBinary.length || stepSnapshot.skippedIgnored.length)) {
+        timeline.logMuted(`${debugToken.muted('Replay snapshot skipped:')} ` +
+          `${debugToken.key('large')} ${stepSnapshot.skippedLarge.length} ` +
+          `${debugToken.muted('·')} ${debugToken.key('binary')} ${stepSnapshot.skippedBinary.length} ` +
+          `${debugToken.muted('·')} ${debugToken.key('gitignored')} ${stepSnapshot.skippedIgnored.length}`);
       }
+      const stepOriginalPaths = currentSnapshot ? new Set(currentSnapshot.keys()) : new Set();
 
-      const started = Date.now();
-      const stepBeforeSnapshot = currentSnapshot;
-      let result;
-      try {
-        result = await runner.run({
-          cwd,
-          projectRoot: cwd,
-          currentDir: cwd,
-          systemPrompt,
-          userPrompt: userMessage,
-          model,
-          runnerAgent,
-          permissionMode,
-          securityPolicy,
-          verbose,
-        });
-      } catch (err) {
-        stats.push({
-          agent: step.agent,
-          provider,
-          model: model || '—',
-          runnerAgent: runnerAgent || '—',
-          securityProfile: securityPolicy.profile,
-          permissionMode: permissionMode || '—',
-          status: 'failed',
-          seconds: (Date.now() - started) / 1000,
-          turns: 0,
-          cost: 0,
-        });
-        failStep(timeline, timelineIndex, err.message, `Step "${step.agent}" failed: ${err.message}`);
-      }
-      const elapsedSeconds = (Date.now() - started) / 1000;
-      const elapsed = elapsedSeconds.toFixed(1);
-      const text = result.text;
-      const stepWritesStart = fileWrites.length;
+      do {
+        if (shouldReplay) {
+          attempt += 1;
+          if (finalAttempt?.stepChanges?.length || finalAttempt?.stepWrites?.length) {
+            timeline.logMuted(`${debugToken.policy('Replay restored project files touched by the previous attempt. Previous run artifacts are kept under their attempt folder.')}`);
+            timeline.logMuted(`${debugToken.key('restored changes')} ${formatDebugList((finalAttempt.stepChanges || []).map((entry) => entry.relPath))}`);
+            timeline.logMuted(`${debugToken.key('previous artifacts')} ${formatDebugList((finalAttempt.stepWrites || []).map((entry) => entry.relPath))}`);
+          }
+          if (stepSnapshot && finalAttempt?.stepChanges?.length) {
+            try {
+              const result = await restoreStepSnapshot({
+                root: cwd,
+                snapshot: stepSnapshot,
+                originalPaths: stepOriginalPaths,
+                changes: finalAttempt.stepChanges,
+              });
+              if (result.skipped.length) {
+                timeline.logMuted(`${debugToken.policy('Could not restore (filtered out of snapshot):')} ${formatDebugList(result.skipped)}`);
+                stats.push({
+                  agent: step.agent,
+                  provider,
+                  model: model || '—',
+                  runnerAgent: runnerAgent || '—',
+                  securityProfile: securityPolicy.profile,
+                  permissionMode: permissionMode || '—',
+                  status: 'failed',
+                  seconds: totalAttemptSeconds,
+                  turns: totalAttemptTurns,
+                  cost: totalAttemptCost,
+                  attempts: attempt,
+                });
+                failStep(
+                  timeline,
+                  timelineIndex,
+                  'replay restore incomplete',
+                  `Replay restore incomplete before step "${step.agent}" attempt ${attempt}. These changed files were excluded from the snapshot:\n- ${result.skipped.join('\n- ')}`
+                );
+              }
+              currentSnapshot = await snapshotProjectFiles(cwd);
+            } catch (err) {
+              stats.push({
+                agent: step.agent,
+                provider,
+                model: model || '—',
+                runnerAgent: runnerAgent || '—',
+                securityProfile: securityPolicy.profile,
+                permissionMode: permissionMode || '—',
+                status: 'failed',
+                seconds: totalAttemptSeconds,
+                turns: totalAttemptTurns,
+                cost: totalAttemptCost,
+                attempts: attempt,
+              });
+              failStep(
+                timeline,
+                timelineIndex,
+                'replay restore failed',
+                `Replay restore failed before step "${step.agent}" attempt ${attempt}: ${err.message}`
+              );
+            }
+          }
+          for (const [key, previousValue] of stepRegistrySnapshot) {
+            if (previousValue === undefined) delete registry[key];
+            else registry[key] = previousValue;
+          }
+          const editedInputs = new Set();
+          if (replayInputOverride) {
+            const nextInputs = { ...replayInputs };
+            for (const [name, value] of Object.entries(replayInputOverride)) {
+              if (Object.prototype.hasOwnProperty.call(nextInputs, name)) {
+                nextInputs[name] = value;
+                editedInputs.add(name);
+              }
+            }
+            replayInputs = nextInputs;
+            replayInputOverride = null;
+          } else {
+            replayInputs = await editDebugInputs({
+              resolvedInputs: replayInputs,
+              shell,
+              timeline,
+              step,
+              debugEvents,
+              editedInputs,
+            });
+          }
+          if (editedInputs.size) {
+            logDebugPromptPreview({
+              systemPrompt,
+              userMessage: buildUserMessage(replayInputs, outputNames, workspaceInfoForAttempt(attempt), securityPolicy),
+              timeline,
+              editedInputs,
+            });
+          }
+          pushDebugEvent(debugEvents, {
+            step: step.agent,
+            phase: 'post-step',
+            action: 'replay-start',
+            attempt,
+            editedInputs: [...editedInputs],
+          });
+        }
+
+        const attemptDir = debug && stepDir ? path.join(stepDir, `attempt-${attempt}`) : stepDir;
+        if (attemptDir) await fs.mkdir(attemptDir, { recursive: true });
+        const attemptWorkspaceInfo = workspaceInfoForAttempt(attempt);
+        const userMessage = buildUserMessage(replayInputs, outputNames, attemptWorkspaceInfo, securityPolicy);
+        timeline.setRunning(
+          timelineIndex,
+          formatStepRuntimeMeta({
+            provider,
+            model: model || '',
+            permissionMode,
+            securityProfile: securityPolicy.profile,
+          })
+        );
+
+        if (verbose) {
+          timeline.log(`── system prompt ──`);
+          for (const l of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(l);
+          timeline.log(`── user message ──`);
+          for (const l of userMessage.split('\n').slice(0, 12)) timeline.logMuted(l);
+        }
+
+        const started = Date.now();
+        const stepBeforeSnapshot = currentSnapshot;
+        let result;
+        try {
+          result = await runner.run({
+            cwd,
+            projectRoot: cwd,
+            currentDir: cwd,
+            systemPrompt,
+            userPrompt: userMessage,
+            model,
+            runnerAgent,
+            permissionMode,
+            securityPolicy,
+            verbose,
+          });
+        } catch (err) {
+          const failedSeconds = (Date.now() - started) / 1000;
+          stats.push({
+            agent: step.agent,
+            provider,
+            model: model || '—',
+            runnerAgent: runnerAgent || '—',
+            securityProfile: securityPolicy.profile,
+            permissionMode: permissionMode || '—',
+            status: 'failed',
+            seconds: totalAttemptSeconds + failedSeconds,
+            turns: 0,
+            cost: totalAttemptCost,
+            attempts: attempt,
+          });
+          failStep(timeline, timelineIndex, err.message, `Step "${step.agent}" failed: ${err.message}`);
+        }
+        const elapsedSeconds = (Date.now() - started) / 1000;
+        const elapsed = elapsedSeconds.toFixed(1);
+        const text = result.text;
+        const attemptTurns = Number(result.metadata.turns || 0);
+        const attemptCost = Number(result.metadata.costUsd || 0);
+        totalAttemptSeconds += elapsedSeconds;
+        totalAttemptTurns += attemptTurns;
+        totalAttemptCost += attemptCost;
+        const stepWritesStart = fileWrites.length;
 
       if (verbose) {
         timeline.log(`── output ──`);
@@ -1653,6 +2051,19 @@ export async function runPipeline(filePath, opts = {}) {
 
       const parsed = parseOutputs(text, outputNames);
       const outputWarnings = validateParsedOutputs(parsed, outputNames);
+      const parsedOutputSummary = summarizeParsedOutputs(parsed, outputNames);
+      let rawOutputPath = null;
+      if (debug && (outputWarnings.length || outputNames.length > 1)) {
+        rawOutputPath = await writeRawOutputArtifact({
+          stepDir: attemptDir,
+          step,
+          text,
+          reason: outputWarnings.length
+            ? `Output warning(s): ${outputWarnings.join(', ')}`
+            : 'Debug raw output capture',
+          timeline,
+        });
+      }
 
       for (const name of outputNames) {
         registry[`${step.agent}.${name}`] = parsed[name];
@@ -1664,17 +2075,17 @@ export async function runPipeline(filePath, opts = {}) {
           }
         }
 
-        if (stepDir) sink = rewriteInternalSink(sink, { cwd, stepDir });
+        if (attemptDir) sink = rewriteInternalSink(sink, { cwd, stepDir: attemptDir });
 
         if (typeof sink === 'string' && sink.startsWith('$FILES:')) {
           const baseDir = sink.slice('$FILES:'.length).trim();
           const absBase = path.isAbsolute(baseDir) ? baseDir : path.join(cwd, baseDir);
-          const isRunArtifactSink = stepDir && isInsidePath(absBase, stepDir);
+          const isRunArtifactSink = attemptDir && isInsidePath(absBase, attemptDir);
           const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
           let manifest;
           try { manifest = JSON.parse(rawJson); } catch (e) {
             await writeRawOutputArtifact({
-              stepDir,
+              stepDir: attemptDir,
               step,
               text,
               reason: `Invalid $FILES JSON for output "${name}"`,
@@ -1705,8 +2116,8 @@ export async function runPipeline(filePath, opts = {}) {
         } else if (typeof sink === 'string' && sink.startsWith('$FILE:')) {
           const outPath = sink.slice('$FILE:'.length).trim();
           const absOut = path.isAbsolute(outPath) ? outPath : path.resolve(cwd, outPath);
-          if (stepDir && isInsidePath(absOut, stepDir)) {
-            assertRunArtifactWriteAllowed(absOut, stepDir, step.agent, name);
+          if (attemptDir && isInsidePath(absOut, attemptDir)) {
+            assertRunArtifactWriteAllowed(absOut, attemptDir, step.agent, name);
           } else {
             assertWriteAllowed(absOut, {
               root: cwd,
@@ -1725,6 +2136,7 @@ export async function runPipeline(filePath, opts = {}) {
         }
       }
 
+      const attemptWrites = fileWrites.slice(stepWritesStart);
       let stepChanges = [];
       if (stepBeforeSnapshot) {
         const stepAfterSnapshot = await snapshotProjectFiles(cwd);
@@ -1753,9 +2165,13 @@ export async function runPipeline(filePath, opts = {}) {
           step,
           parsed,
           outputNames,
-          stepWrites: fileWrites.slice(stepWritesStart),
+          stepWrites: attemptWrites,
           stepChanges,
           outputWarnings,
+          rawText: text,
+          rawOutputPath: rawOutputPath ? path.relative(cwd, rawOutputPath) : null,
+          attempt,
+          maxDebugReplays,
           cwd,
           timeline,
           shell,
@@ -1764,7 +2180,11 @@ export async function runPipeline(filePath, opts = {}) {
           debugEvents,
         });
 
-        if (postDecision === 'abort') {
+        const postAction = typeof postDecision === 'object' && postDecision
+          ? postDecision.action
+          : postDecision;
+
+        if (postAction === 'abort') {
           stats.push({
             agent: step.agent,
             provider,
@@ -1773,18 +2193,57 @@ export async function runPipeline(filePath, opts = {}) {
             securityProfile: securityPolicy.profile,
             permissionMode: permissionMode || '—',
             status: 'failed',
-            seconds: elapsedSeconds,
-            turns: Number(result.metadata.turns || 0),
-            cost: Number(result.metadata.costUsd || 0),
+            seconds: totalAttemptSeconds,
+            turns: totalAttemptTurns,
+            cost: totalAttemptCost,
+            attempts: attempt,
+            outputWarnings,
+            parsedOutputs: parsedOutputSummary,
+            rawOutputPath: rawOutputPath ? path.relative(cwd, rawOutputPath) : null,
           });
           failStep(timeline, timelineIndex, 'aborted after output review', `Pipeline aborted after step "${step.agent}" output review.`);
         }
+        if (postAction === 'replay') {
+          if (attempt - 1 >= maxDebugReplays) {
+            stats.push({
+              agent: step.agent,
+              provider,
+              model: model || '—',
+              runnerAgent: runnerAgent || '—',
+              securityProfile: securityPolicy.profile,
+              permissionMode: permissionMode || '—',
+              status: 'failed',
+              seconds: totalAttemptSeconds,
+              turns: totalAttemptTurns,
+              cost: totalAttemptCost,
+              attempts: attempt,
+              outputWarnings,
+              parsedOutputs: parsedOutputSummary,
+              rawOutputPath: rawOutputPath ? path.relative(cwd, rawOutputPath) : null,
+            });
+            failStep(
+              timeline,
+              timelineIndex,
+              'replay limit reached',
+              `Replay limit reached for step "${step.agent}" (${maxDebugReplays} per step).`
+            );
+          }
+          finalAttempt = { stepChanges, stepWrites: attemptWrites };
+          fileWrites.splice(stepWritesStart);
+          replayInputOverride = typeof postDecision === 'object' && postDecision?.inputs
+            ? postDecision.inputs
+            : null;
+          shouldReplay = true;
+          continue;
+        }
       }
 
-      const costInfo = result.metadata.costUsd ? ` · $${result.metadata.costUsd.toFixed(4)}` : '';
-      const turnInfo = result.metadata.turns ? ` · ${result.metadata.turns}t` : '';
-      timeline.setDone(timelineIndex, `${elapsed}s${turnInfo}${costInfo}`);
-      timeline.log(`✓ ${step.agent} — ${elapsed}s${turnInfo}${costInfo}`);
+      const totalElapsed = totalAttemptSeconds.toFixed(1);
+      const costInfo = totalAttemptCost ? ` · $${totalAttemptCost.toFixed(4)}` : '';
+      const turnInfo = totalAttemptTurns ? ` · ${totalAttemptTurns}t` : '';
+      const attemptInfo = attempt > 1 ? ` · ${attempt} attempts` : '';
+      timeline.setDone(timelineIndex, `${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
+      timeline.log(`✓ ${step.agent} — ${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
       stats.push({
         agent: step.agent,
         provider,
@@ -1793,10 +2252,16 @@ export async function runPipeline(filePath, opts = {}) {
         securityProfile: securityPolicy.profile,
         permissionMode: permissionMode || '—',
         status: 'done',
-        seconds: elapsedSeconds,
-        turns: Number(result.metadata.turns || 0),
-        cost: Number(result.metadata.costUsd || 0),
+        seconds: totalAttemptSeconds,
+        turns: totalAttemptTurns,
+        cost: totalAttemptCost,
+        attempts: attempt,
+        outputWarnings,
+        parsedOutputs: parsedOutputSummary,
+        rawOutputPath: rawOutputPath ? path.relative(cwd, rawOutputPath) : null,
       });
+      shouldReplay = false;
+    } while (shouldReplay);
     }
   } catch (err) {
     runError = err;

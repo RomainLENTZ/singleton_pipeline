@@ -347,6 +347,16 @@ export function createShell() {
 
     if (!inputEnabled && !promptMode) return;
 
+    if (promptMode && key.name === 'escape') {
+      const { resolve, message } = promptMode;
+      promptMode = null;
+      buffer = '';
+      log(`{${C.ghost}-fg}↩ cancelled{/} {${C.dimV}-fg}${message}{/}`);
+      updatePrompt();
+      resolve('__SINGLETON_ESC__');
+      return;
+    }
+
     if (!promptMode && key.name === 'tab') {
       if (suggestions.length > 1) {
         suggestIndex = (suggestIndex + 1) % suggestions.length;
