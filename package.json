@@ -1,23 +1,75 @@
 {
-  "name": "singleton-pipeline-builder",
-  "version": "0.3.0-beta.0",
-  "private": true,
+  "name": "singleton-pipeline",
+  "version": "0.4.0-beta.0",
+  "description": "Visual pipeline builder for multi-agent AI workflows. Orchestrates Claude Code, Codex, Copilot, and OpenCode under a unified security policy.",
+  "keywords": [
+    "ai",
+    "agents",
+    "claude",
+    "claude-code",
+    "codex",
+    "copilot",
+    "opencode",
+    "pipeline",
+    "orchestrator",
+    "cli"
+  ],
+  "homepage": "https://github.com/RomainLENTZ/singleton_pipeline",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RomainLENTZ/singleton_pipeline.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RomainLENTZ/singleton_pipeline/issues"
+  },
+  "license": "MIT",
+  "author": "Romain Lentz",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "singleton": "./packages/cli/src/index.js"
   },
+  "files": [
+    "packages/cli/src/**/*.js",
+    "!packages/cli/src/**/*.test.js",
+    "!packages/cli/src/__fixtures__",
+    "packages/cli/package.json",
+    "packages/server/src/**/*.js",
+    "packages/server/package.json",
+    "packages/web/dist/**",
+    "packages/web/package.json",
+    "docs/reference.md",
+    "README.md",
+    "LICENSE"
+  ],
   "workspaces": [
     "packages/*"
   ],
+  "dependencies": {
+    "@inquirer/prompts": "^7.2.1",
+    "blessed": "^0.1.81",
+    "chalk": "^5.6.2",
+    "commander": "^12.1.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "fast-glob": "^3.3.2",
+    "figlet": "^1.11.0",
+    "kleur": "^4.1.5"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  },
   "scripts": {
     "singleton": "node packages/cli/src/index.js",
     "scan": "node packages/cli/src/index.js scan",
     "serve": "node packages/cli/src/index.js serve",
     "dev:server": "node packages/server/src/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "devDependencies": {
-    "vitest": "^3.2.4"
+    "test:watch": "vitest",
+    "build:web": "npm run build -w @singleton/web",
+    "prepublishOnly": "npm run build:web && npm test",
+    "pack:smoke": "npm pack && tar -tzf singleton-pipeline-*.tgz | head -60"
   }
 }

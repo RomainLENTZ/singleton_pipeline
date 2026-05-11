@@ -29,3 +29,6 @@ examples/**/.singleton/runs/**
 examples/**/node_modules/
 examples/**/dist/
 examples/**/build/
+
+# npm pack output (created locally before publish)
+*.tgz
