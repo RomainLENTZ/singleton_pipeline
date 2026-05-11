@@ -1,24 +1,44 @@
-# Singleton Pipeline Builder (v0.3.0-beta.0)
+# Singleton Pipeline Builder (v0.4.0-beta.0)
+
+[![npm version](https://img.shields.io/npm/v/singleton-pipeline/beta.svg)](https://www.npmjs.com/package/singleton-pipeline)
+[![npm downloads](https://img.shields.io/npm/dm/singleton-pipeline.svg)](https://www.npmjs.com/package/singleton-pipeline)
+[![license](https://img.shields.io/npm/l/singleton-pipeline.svg)](LICENSE)
 
 Build multi-agent pipelines for your codebase, visually.
 
-You probably already chain Claude, Codex, or Copilot agents by hand: a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
+You probably already chain Claude, Codex, Copilot, or OpenCode agents by hand: a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
 
 - agents are plain Markdown files
 - pipelines are JSON, stored in your project under `.singleton/`
 - runs are versioned, with a manifest of what was actually written
-- nothing leaves your machine Singleton drives local provider CLIs (`claude`, `codex`, `copilot`)
+- nothing leaves your machine Singleton drives local provider CLIs (`claude`, `codex`, `copilot`, `opencode`)
 
 > Status: beta. Singleton is usable locally, but the pipeline format, provider adapters, and builder UX may still evolve.
 
+## Version 0.4.0 Beta
+
+This beta uniformizes the four runners around a single security model and adds the deterministic post-run validation layer.
+
+- All four runners (Claude Code, Codex, Copilot, OpenCode) accept a `security_profile` parameter and translate it to their native CLI flags through a dedicated, unit-tested builder (`buildClaudePermissionArgs`, `buildCodexSandboxArgs`, `buildCopilotPermissionArgs`, `buildOpenCodePermissionConfig`).
+- Codex now honors the four profiles via `--sandbox` modes (`read-only`, `workspace-write`, `danger-full-access`) instead of a hardcoded `workspace-write`.
+- Claude now maps profiles to `--permission-mode` and `--disallowedTools` instead of relying on the legacy `permission_mode`; the legacy escape hatch is preserved.
+- Layer 3 (post-run snapshot diff) is now covered by a dedicated test suite that exercises out-of-bounds writes, blocked-path patterns, `../` traversal, and read-only enforcement without any LLM in the loop.
+- `assertWriteAllowed` is unit-tested as the atomic security predicate (11 cases) in `security/policy.test.js`.
+- Preflight now emits explicit info/warning messages for each provider × profile combination, calling out when Singleton relies on Layer 3 because a runner has no per-path filter.
+- Shared runner helpers (`safeJsonParse`, `extractText`, `findUsage`, `findCostUsd`) factored into `runners/_shared.js`; ~120 lines of duplicated parsing logic removed.
+- OpenCode auth fix: Singleton no longer redirects `XDG_DATA_HOME`, which used to strip provider credentials from the spawned process. Permission isolation now relies exclusively on `OPENCODE_CONFIG_CONTENT`.
+- A `Security model` section in this README describes the three layers and their per-runner coverage.
+- Test count grew from 52 to 96 across the uniformization work.
+
 ## Version 0.3.0 Beta
 
-This beta focuses on multi-provider execution, Copilot support, inspection, and safer local runs.
+This beta focused on multi-provider execution, Copilot support, inspection, and safer local runs.
 
-- Claude, Codex, and Copilot can now run from the same pipeline model.
+- Claude, Codex, Copilot, and experimental OpenCode can now run from the same pipeline model.
 - Copilot support uses the local `copilot` CLI with optional `runner_agent`.
 - Copilot tool permissions are generated from Singleton security profiles using `--allow-tool` and `--deny-tool`.
 - Repo-level Copilot profiles in `.github/agents/*.agent.md` are optional; user-level and organization-level agents can also be used.
+- OpenCode support uses the local `opencode` CLI with optional `runner_agent`; Singleton maps security profiles to OpenCode native permissions through runtime config.
 - `Policy` is now visible during runs and in the final recap.
 - Agents can run as `read-only`, `workspace-write`, `restricted-write`, or `dangerous`.
 - Pipelines can restrict writers to exact files or folders with `allowed_paths`.
@@ -41,12 +61,31 @@ This beta focuses on multi-provider execution, Copilot support, inspection, and 
 
 ## Install
 
+The fastest path is via npm:
+
 ```bash
+npm install -g singleton-pipeline@beta
+singleton --version
+```
+
+Or run it directly without installing globally:
+
+```bash
+npx singleton-pipeline@beta --help
+```
+
+Singleton drives the provider CLIs you already use; install the ones you want in your `$PATH` with a working session: `claude`, `codex`, `copilot`, `opencode`.
+
+Requirements: Node 20+.
+
+### From source (development)
+
+```bash
+git clone https://github.com/RomainLENTZ/singleton_pipeline.git
+cd singleton_pipeline
 npm install
 npm link        # optional, to use `singleton` globally
 ```
-
-Requirements: Node 20+, plus the provider CLIs you want to use in your `$PATH` with a working session: `claude`, `codex`, and/or `copilot`.
 
 ## Quickstart
 
@@ -100,6 +139,25 @@ Debug mode adds interactive checkpoints before and after each agent. It is desig
 
 Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
 
+## Security model
+
+Singleton enforces a `security_profile` (`read-only`, `restricted-write`, `workspace-write`, `dangerous`) at three layers, in order of trust:
+
+1. **Prompt-level policy** — Singleton injects a `<security_policy>` block in the user message describing `allowed_paths`/`blocked_paths`. Cooperative models honor it on their own. *Not load-bearing*: a jailbreak can bypass it.
+2. **Runner-native permissions** — Singleton translates the profile into each CLI's native flags before spawning. Best-effort, varies by runner (see matrix below).
+3. **Post-run snapshot diff** — Singleton snapshots the project filesystem before each step and diffs it after. Any change outside `allowed_paths` (or matching `blocked_paths`) fails the step, regardless of what the agent did. *This is the deterministic guarantee* — it does not depend on the LLM, the runner, or the prompt.
+
+| Profile | Claude Code | Codex | Copilot | OpenCode |
+| --- | --- | --- | --- | --- |
+| `read-only` | native (`--disallowedTools Write,Edit,Bash,NotebookEdit`) | native (`--sandbox read-only`) | native (`--deny-tool=write --deny-tool=shell`) | native (`permission.edit=deny`) |
+| `restricted-write` (per `allowed_paths`) | ⚠ no per-path filter → Layer 3 enforces | ⚠ no per-path filter → Layer 3 enforces | ✅ native (`--allow-tool=write(path)`) | ✅ native (`permission.edit` per pattern) |
+| `workspace-write` | native (`--permission-mode acceptEdits`) | native (`--sandbox workspace-write`) | native (`--allow-tool=write`) | native (`permission.edit=allow`) |
+| `dangerous` | bypass (`--permission-mode bypassPermissions`) | bypass (`--sandbox danger-full-access`) | bypass (`--allow-all-tools`) | bypass (`--dangerously-skip-permissions`) |
+
+⚠ Claude and Codex do not expose per-path write filters in their CLIs. For these runners, the agent *can* write anywhere it has permission to — Singleton's post-run snapshot diff is what fails the step when the write lands outside `allowed_paths`. Layer 3 covers both runners with a deterministic check that does not depend on the agent cooperating.
+
+Tests covering Layer 3: see [`packages/cli/src/security/policy.test.js`](packages/cli/src/security/policy.test.js) (`assertWriteAllowed` atomic predicate, including `../` traversal and blocked-path patterns) and [`packages/cli/src/executor.test.js`](packages/cli/src/executor.test.js) (`describe('Layer 3 — post-run snapshot diff …')` end-to-end without any LLM in the loop).
+
 ## Examples
 
 The repository ships with runnable example projects:
@@ -110,6 +168,7 @@ The repository ships with runnable example projects:
 | `examples/codex-code-review` | Codex | Same code workflow, using Codex only |
 | `examples/mixed-code-review` | Claude + Codex | Claude scouts/reviews, Codex edits code |
 | `examples/frontend-audit` | Claude | Read-only frontend audit pipeline |
+| `examples/opencode-review` | OpenCode | Experimental read-only review pipeline |
 
 The code-review examples are portable templates: they do not ship a toy source file. When you run them for real, provide a spec, a target file path, and the same file as readable context from your own project.
 
