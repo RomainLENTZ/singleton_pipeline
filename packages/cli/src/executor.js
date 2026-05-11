@@ -1076,7 +1076,8 @@ function shouldHighlightSecurity({ provider, permissionMode, securityPolicy }) {
 
 function commandExists(command) {
   return new Promise((resolve) => {
-    const child = spawn('which', [command], { stdio: 'ignore' });
+    const lookup = process.platform === 'win32' ? 'where' : 'which';
+    const child = spawn(lookup, [command], { stdio: 'ignore' });
     child.on('error', () => resolve(false));
     child.on('close', (code) => resolve(code === 0));
   });
