@@ -359,7 +359,7 @@ function resolveModel(step, agent) {
 }
 
 function resolveRunnerAgent(step, agent) {
-  return step.runner_agent || agent.runner_agent || null;
+  return step.runner_agent || step.opencode_agent || agent.runner_agent || agent.opencode_agent || null;
 }
 
 async function resolveCopilotProjectRoot(cwd) {
@@ -378,16 +378,131 @@ async function findCopilotRepoAgentProfile(cwd, runnerAgent) {
   const file = path.join(projectRoot, '.github', 'agents', `${name}.agent.md`);
   try {
     await fs.access(file);
-    return { file, projectRoot };
+    const raw = await fs.readFile(file, 'utf8');
+    return { file, projectRoot, tools: parseCopilotAgentTools(raw) };
   } catch {
     const singletonRootFile = path.join(cwd, '.github', 'agents', `${name}.agent.md`);
     try {
       await fs.access(singletonRootFile);
-      return { file: singletonRootFile, projectRoot, notVisibleFromGitRoot: projectRoot !== cwd };
+      const raw = await fs.readFile(singletonRootFile, 'utf8');
+      return {
+        file: singletonRootFile,
+        projectRoot,
+        notVisibleFromGitRoot: projectRoot !== cwd,
+        tools: parseCopilotAgentTools(raw),
+      };
     } catch {
       return { file: null, projectRoot };
     }
   }
+}
+
+function parseCopilotAgentTools(raw) {
+  const match = String(raw || '').match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return [];
+
+  for (const line of match[1].split('\n')) {
+    const m = line.match(/^\s*tools\s*:\s*\[([^\]]*)\]\s*$/);
+    if (!m) continue;
+    return m[1]
+      .split(',')
+      .map((token) => token.trim().replace(/^["']|["']$/g, ''))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function validateCopilotAgentTools({ label, runnerAgent, securityPolicy, tools }) {
+  const errors = [];
+  const warnings = [];
+  const list = Array.isArray(tools) ? tools : [];
+  const writeEnabled = list.includes('write') || list.includes('edit');
+  const shellEnabled = list.includes('shell') || list.includes('bash');
+
+  if (securityPolicy.profile === 'restricted-write' || securityPolicy.profile === 'workspace-write') {
+    if (list.length && !writeEnabled) {
+      warnings.push(`${label} Copilot runner_agent "${runnerAgent}" declares tools without write/edit; the step may be unable to modify allowed_paths.`);
+    }
+    if (shellEnabled) {
+      warnings.push(`${label} Copilot runner_agent "${runnerAgent}" enables shell tools; Singleton cannot sandbox external side effects from shell commands.`);
+    }
+  }
+
+  if (securityPolicy.profile === 'read-only' && writeEnabled) {
+    warnings.push(`${label} Copilot runner_agent "${runnerAgent}" enables write/edit tools; Singleton will override them with --deny-tool=write for security_profile "read-only".`);
+  }
+
+  return { errors, warnings };
+}
+
+async function findOpenCodeProjectAgentProfile(cwd, runnerAgent) {
+  const name = String(runnerAgent || '').trim();
+  if (!name || name.includes('/') || name.includes('\\')) return null;
+
+  const file = path.join(cwd, '.opencode', 'agents', `${name}.md`);
+  try {
+    await fs.access(file);
+    const raw = await fs.readFile(file, 'utf8');
+    return { file, tools: parseOpenCodeAgentTools(raw) };
+  } catch {
+    return { file: null };
+  }
+}
+
+function parseOpenCodeAgentTools(raw) {
+  const match = String(raw || '').match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+
+  const tools = {};
+  let inTools = false;
+  for (const line of match[1].split('\n')) {
+    if (/^\s*tools\s*:\s*$/.test(line)) {
+      inTools = true;
+      continue;
+    }
+    if (inTools && /^\S/.test(line)) break;
+    const toolMatch = line.match(/^\s{2,}([A-Za-z0-9_-]+)\s*:\s*(true|false)\s*$/);
+    if (inTools && toolMatch) {
+      tools[toolMatch[1]] = toolMatch[2] === 'true';
+    }
+  }
+
+  return tools;
+}
+
+function validateOpenCodeAgentTools({ label, runnerAgent, securityPolicy, tools }) {
+  const errors = [];
+  const warnings = [];
+  const writeEnabled = tools.write === true || tools.edit === true;
+  const bashEnabled = tools.bash === true;
+
+  if (securityPolicy.profile === 'read-only') {
+    const enabled = ['write', 'edit', 'bash'].filter((name) => tools[name] === true);
+    if (enabled.length) {
+      warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" enables legacy ${enabled.join(', ')} tools; Singleton will override them with native OpenCode permissions for security_profile "read-only".`);
+    }
+  }
+
+  if (securityPolicy.profile === 'restricted-write') {
+    warnings.push(`${label} uses OpenCode with security_profile "restricted-write"; Singleton will inject native OpenCode edit permissions for allowed_paths and still validate post-run changes.`);
+    if (!writeEnabled) {
+      warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" does not enable write/edit tools; the step may be unable to modify allowed_paths.`);
+    }
+    if (bashEnabled) {
+      warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" enables bash; Singleton cannot sandbox external side effects from shell commands.`);
+    }
+  }
+
+  if (securityPolicy.profile === 'workspace-write') {
+    if (!writeEnabled) {
+      warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" does not enable write/edit tools; the step may behave as read-only.`);
+    }
+    if (bashEnabled) {
+      warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" enables bash; keep workspace-write steps scoped and review post-run changes.`);
+    }
+  }
+
+  return { errors, warnings };
 }
 
 function resolvePermissionMode(step, agent) {
@@ -1062,6 +1177,9 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     if (provider === 'copilot' && !runnerAgent) {
       warnings.push(`${label} uses provider "copilot" without runner_agent; Copilot will use its default agent.`);
     }
+    if (provider === 'opencode' && !runnerAgent) {
+      warnings.push(`${label} uses provider "opencode" without runner_agent; OpenCode will use its default agent.`);
+    }
     const permissionMode = resolvePermissionMode(step, agent);
     if (provider === 'claude' && permissionMode && permissionMode !== 'bypassPermissions') {
       errors.push(`${label} uses unsupported Claude permission_mode "${permissionMode}".`);
@@ -1072,6 +1190,26 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
     if (provider === 'claude' && permissionMode === 'bypassPermissions') {
       infos.push(`${label} runs Claude with permission_mode "${permissionMode}".`);
     }
+    if (provider === 'claude' && !permissionMode) {
+      if (securityPolicy.profile === 'read-only') {
+        infos.push(`${label} runs Claude in read-only mode (Write/Edit/Bash disabled via --disallowedTools).`);
+      } else if (securityPolicy.profile === 'restricted-write') {
+        warnings.push(`${label} uses Claude with security_profile "restricted-write"; Claude has no per-path tool filter, so Singleton relies on its post-run snapshot diff to reject writes outside allowed_paths.`);
+      } else if (securityPolicy.profile === 'dangerous') {
+        warnings.push(`${label} uses Claude with security_profile "dangerous"; Singleton will pass --permission-mode bypassPermissions.`);
+      }
+    }
+    if (provider === 'codex') {
+      if (securityPolicy.profile === 'read-only') {
+        infos.push(`${label} runs Codex in --sandbox read-only.`);
+      } else if (securityPolicy.profile === 'restricted-write') {
+        warnings.push(`${label} uses Codex with security_profile "restricted-write"; Codex has no per-path sandbox filter, so Singleton relies on its post-run snapshot diff to reject writes outside allowed_paths.`);
+      } else if (securityPolicy.profile === 'workspace-write') {
+        infos.push(`${label} runs Codex in --sandbox workspace-write.`);
+      } else if (securityPolicy.profile === 'dangerous') {
+        warnings.push(`${label} uses Codex with security_profile "dangerous"; Singleton will pass --sandbox danger-full-access.`);
+      }
+    }
     if (provider === 'copilot' && runnerAgent) {
       infos.push(`${label} runs Copilot with runner_agent "${runnerAgent}".`);
       const repoAgentProfile = await findCopilotRepoAgentProfile(cwd, runnerAgent);
@@ -1081,6 +1219,46 @@ async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRu
         warnings.push(`${label} Copilot runner_agent "${runnerAgent}" exists at ${path.relative(cwd, repoAgentProfile.file)}, but Copilot will use git root ${repoAgentProfile.projectRoot}. Move the profile to ${path.relative(cwd, path.join(repoAgentProfile.projectRoot, '.github', 'agents'))} or run inside a standalone git repo.`);
       } else {
         warnings.push(`${label} Copilot runner_agent "${runnerAgent}" was not found in .github/agents; Copilot may still resolve a user-level or organization-level agent.`);
+      }
+      if (repoAgentProfile?.file) {
+        const toolValidation = validateCopilotAgentTools({
+          label,
+          runnerAgent,
+          securityPolicy,
+          tools: repoAgentProfile.tools || [],
+        });
+        errors.push(...toolValidation.errors);
+        warnings.push(...toolValidation.warnings);
+      }
+    }
+    if (provider === 'opencode') {
+      const opencodeRuntime = [
+        model ? `model "${model}"` : null,
+        runnerAgent ? `runner_agent "${runnerAgent}"` : 'default agent',
+      ].filter(Boolean).join(' · ');
+      infos.push(`${label} runs OpenCode${opencodeRuntime ? ` with ${opencodeRuntime}` : ''}.`);
+      if (runnerAgent) {
+        const projectAgentProfile = await findOpenCodeProjectAgentProfile(cwd, runnerAgent);
+        if (projectAgentProfile?.file) {
+          infos.push(`${label} OpenCode project agent profile: ${path.relative(cwd, projectAgentProfile.file)}.`);
+          const toolValidation = validateOpenCodeAgentTools({
+            label,
+            runnerAgent,
+            securityPolicy,
+            tools: projectAgentProfile.tools || {},
+          });
+          errors.push(...toolValidation.errors);
+          warnings.push(...toolValidation.warnings);
+        } else if (projectAgentProfile === null) {
+          warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" cannot be validated as a local project agent name.`);
+        } else {
+          warnings.push(`${label} OpenCode runner_agent "${runnerAgent}" was not found in .opencode/agents; OpenCode may still resolve a user-level agent.`);
+        }
+      }
+      if (securityPolicy.profile === 'dangerous') {
+        warnings.push(`${label} uses provider "opencode" with security_profile "dangerous"; Singleton will pass --dangerously-skip-permissions.`);
+      } else if (securityPolicy.profile !== 'restricted-write') {
+        warnings.push(`${label} uses experimental provider "opencode"; Singleton enforces the security policy with write-time and post-run validation.`);
       }
     }
     if (shouldHighlightSecurity({ provider, permissionMode, securityPolicy })) {
@@ -1310,6 +1488,7 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
 const SNAPSHOT_SKIP_DIRS = new Set([
   '.git',
   '.singleton',
+  '.opencode',
   '.idea',
   '.vscode',
   'node_modules',
@@ -1463,7 +1642,7 @@ async function createStepSnapshot({ root, snapshotDir, gitRepo, maxFileBytes = S
   return { snapshotDir, captured, skippedLarge, skippedBinary, skippedIgnored };
 }
 
-function detectSnapshotChanges(before, after, root) {
+export function detectSnapshotChanges(before, after, root) {
   const changed = [];
   const paths = new Set([...before.keys(), ...after.keys()]);
   for (const relPath of paths) {
@@ -1502,7 +1681,7 @@ async function restoreStepSnapshot({ root, snapshot, originalPaths, changes }) {
   return { restored, removed, skipped };
 }
 
-function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
+export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
   const violations = [];
   for (const change of changes) {
     try {
@@ -2269,6 +2448,31 @@ export async function runPipeline(filePath, opts = {}) {
           cwd,
         });
         currentSnapshot = stepAfterSnapshot;
+      }
+
+      if (step.require_changes && stepChanges.length === 0) {
+        stats.push({
+          agent: step.agent,
+          provider,
+          model: model || '—',
+          runnerAgent: runnerAgent || '—',
+          securityProfile: securityPolicy.profile,
+          permissionMode: permissionMode || '—',
+          status: 'failed',
+          seconds: totalAttemptSeconds,
+          turns: totalAttemptTurns,
+          cost: totalAttemptCost,
+          attempts: attempt,
+          outputWarnings,
+          parsedOutputs: parsedOutputSummary,
+          rawOutputPath: rawOutputPath ? path.relative(cwd, rawOutputPath) : null,
+        });
+        failStep(
+          timeline,
+          timelineIndex,
+          'no project changes',
+          `Step "${step.agent}" requires project file changes but did not modify any tracked project file.`
+        );
       }
 
       if (debug) {

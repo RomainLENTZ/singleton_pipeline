@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { discoverCodexProjectInstructions } from './codex-instructions.js';
+import { findUsage, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
@@ -28,68 +29,54 @@ function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
   return parts.join('\n');
 }
 
-function safeJsonParse(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
+export function buildCodexSandboxArgs(securityPolicy = {}) {
+  const profile = securityPolicy.profile || 'workspace-write';
+
+  // Codex CLI sandbox modes: read-only, workspace-write,
+  // workspace-write-with-network, danger-full-access. Codex has no per-path
+  // filter, so restricted-write maps to workspace-write at the runner level
+  // and Singleton's post-run snapshot diff enforces the allowed_paths.
+  if (profile === 'read-only') return ['--sandbox', 'read-only'];
+  if (profile === 'dangerous') return ['--sandbox', 'danger-full-access'];
+  return ['--sandbox', 'workspace-write'];
 }
 
-function findUsage(value) {
-  if (!value || typeof value !== 'object') return null;
+export function buildCodexArgs({ prompt, model, outputFile, securityPolicy } = {}) {
+  const args = [
+    'exec',
+    '--json',
+    '--ephemeral',
+    '--skip-git-repo-check',
+    ...buildCodexSandboxArgs(securityPolicy),
+    '--output-last-message',
+    outputFile,
+  ];
 
-  if (
-    Object.prototype.hasOwnProperty.call(value, 'input_tokens') ||
-    Object.prototype.hasOwnProperty.call(value, 'output_tokens')
-  ) {
-    return {
-      input: value.input_tokens ?? null,
-      output: value.output_tokens ?? null,
-    };
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(value, 'input') ||
-    Object.prototype.hasOwnProperty.call(value, 'output')
-  ) {
-    return {
-      input: value.input ?? null,
-      output: value.output ?? null,
-    };
-  }
-
-  for (const nested of Object.values(value)) {
-    const usage = findUsage(nested);
-    if (usage) return usage;
-  }
-
-  return null;
+  if (model) args.push('--model', model);
+  args.push('-');
+  return args;
 }
 
 export const codexRunner = {
   id: 'codex',
   command: 'codex',
 
-  async run({ cwd, projectRoot = cwd, currentDir = cwd, systemPrompt, userPrompt, model, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  async run({
+    cwd,
+    projectRoot = cwd,
+    currentDir = cwd,
+    systemPrompt,
+    userPrompt,
+    model,
+    securityPolicy,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  }) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'singleton-codex-'));
     const outputFile = path.join(tempDir, 'last-message.txt');
     const projectInstructions = await discoverCodexProjectInstructions(projectRoot, currentDir);
     const prompt = buildPrompt(systemPrompt, userPrompt, projectInstructions.text);
 
-    const args = [
-      'exec',
-      '--json',
-      '--ephemeral',
-      '--skip-git-repo-check',
-      '--sandbox',
-      'workspace-write',
-      '--output-last-message',
-      outputFile,
-      '-',
-    ];
-
-    if (model) args.splice(args.length - 1, 0, '--model', model);
+    const args = buildCodexArgs({ prompt, model, outputFile, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
       const child = spawn('codex', args, {

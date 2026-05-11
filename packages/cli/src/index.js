@@ -10,10 +10,19 @@ import { replCommand } from './commands/repl.js';
 
 const program = new Command();
 
+function groupAgentsByProvider(agents) {
+  return agents.reduce((groups, agent) => {
+    const provider = agent.provider || 'unknown';
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(agent);
+    return groups;
+  }, new Map());
+}
+
 program
   .name('singleton')
   .description('Singleton Pipeline Builder — scan agents and build pipelines')
-  .version('0.3.0-beta.0');
+  .version('0.4.0-beta.0');
 
 program
   .command('scan')
@@ -32,17 +41,24 @@ program
     }
 
     console.log(style.success(`\nFound ${agents.length} agent(s):\n`));
-    agents.forEach((a, index) => {
-      console.log(style.id(`  ${a.id}`) + style.muted(` — ${a.description || '(no description)'}`));
-      console.log(style.muted(`    file:    ${path.relative(absPath, a.file)}`));
-      console.log(style.info(`    source:`) + style.muted(`  ${a.source || 'repo'}`));
-      if (a.provider) console.log(style.warn(`    provider:`) + style.muted(` ${a.provider}`));
-      if (a.permission_mode) console.log(style.warn(`    permission:`) + style.muted(` ${a.permission_mode}`));
-      console.log(style.success(`    in:`) + style.muted(`      ${a.inputs.join(', ') || '(none)'}`));
-      console.log(style.id(`    out:`) + style.muted(`     ${a.outputs.join(', ') || '(none)'}`));
-      if (a.tags?.length) console.log(style.muted(`    tags:    ${a.tags.join(', ')}`));
+    const groups = groupAgentsByProvider(agents);
+    [...groups.entries()].forEach(([provider, providerAgents]) => {
+      console.log(style.muted('  ════════════════════════════════════════'));
+      console.log(style.heading(`  ${provider}`) + style.muted(` (${providerAgents.length})`));
+      console.log(style.muted('  ════════════════════════════════════════'));
       console.log();
-      if (index < agents.length - 1) console.log(style.muted('  ────────────────────────────────────────'));
+
+      providerAgents.forEach((a, index) => {
+        console.log(style.id(`    ${a.id}`) + style.muted(` — ${a.description || '(no description)'}`));
+        console.log(style.muted(`      file:    ${path.relative(absPath, a.file)}`));
+        console.log(style.info(`      source:`) + style.muted(`  ${a.source || 'repo'}`));
+        if (a.permission_mode) console.log(style.warn(`      permission:`) + style.muted(` ${a.permission_mode}`));
+        console.log(style.success(`      in:`) + style.muted(`      ${a.inputs.join(', ') || '(none)'}`));
+        console.log(style.id(`      out:`) + style.muted(`     ${a.outputs.join(', ') || '(none)'}`));
+        if (a.tags?.length) console.log(style.muted(`      tags:    ${a.tags.join(', ')}`));
+        if (index < providerAgents.length - 1) console.log(style.muted('    ──────────────────────────────────────'));
+      });
+      console.log();
     });
 
     const outPath = path.resolve(absPath, opts.output);

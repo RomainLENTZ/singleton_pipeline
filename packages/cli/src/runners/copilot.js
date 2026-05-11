@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { extractText, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
@@ -14,14 +15,6 @@ function buildPrompt(systemPrompt, userPrompt) {
     '</user>',
     '',
   ].join('\n');
-}
-
-function safeJsonParse(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
 }
 
 function normalizeToolPath(value) {
@@ -83,23 +76,23 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
-function extractContent(value) {
-  if (typeof value === 'string') return value;
-  if (!value || typeof value !== 'object') return '';
-  if (typeof value.content === 'string') return value.content;
-  if (Array.isArray(value.content)) {
-    return value.content
-      .map((item) => (typeof item === 'string' ? item : item?.text || item?.content || ''))
-      .filter(Boolean)
-      .join('\n');
-  }
-  return '';
+export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
+  const args = [
+    '-p',
+    prompt,
+    '--output-format',
+    'json',
+    ...buildCopilotPermissionArgs(securityPolicy),
+  ];
+  if (runnerAgent) args.push('--agent', runnerAgent);
+  if (model) args.push('--model', model);
+  return args;
 }
 
-function summarizeEvents(events) {
+export function summarizeCopilotEvents(events) {
   const assistantMessages = events
     .filter((event) => event.type === 'assistant.message')
-    .map((event) => extractContent(event.data))
+    .map((event) => extractText(event.data))
     .filter(Boolean);
   const deltaText = events
     .filter((event) => event.type === 'assistant.message_delta')
@@ -121,6 +114,16 @@ function summarizeEvents(events) {
   };
 }
 
+export function extractCopilotErrorMessage(event) {
+  if (!event || typeof event !== 'object') return '';
+  if (typeof event.error === 'string') return event.error;
+  if (typeof event.message === 'string') return event.message;
+  if (typeof event.error?.message === 'string') return event.error.message;
+  if (typeof event.error?.data?.message === 'string') return event.error.data.message;
+  if (typeof event.data?.message === 'string') return event.data.message;
+  return extractText(event);
+}
+
 export const copilotRunner = {
   id: 'copilot',
   command: 'copilot',
@@ -135,16 +138,7 @@ export const copilotRunner = {
     timeoutMs = DEFAULT_TIMEOUT_MS,
   }) {
     const prompt = buildPrompt(systemPrompt, userPrompt);
-    const args = [
-      '-p',
-      prompt,
-      '--output-format',
-      'json',
-      ...buildCopilotPermissionArgs(securityPolicy),
-    ];
-
-    if (runnerAgent) args.push('--agent', runnerAgent);
-    if (model) args.push('--model', model);
+    const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
       const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -180,7 +174,7 @@ export const copilotRunner = {
         }
         if (code !== 0) {
           const result = [...events].reverse().find((event) => event.type === 'result');
-          const message = result?.error || result?.message || stderrText.trim() || stdout.trim() || 'unknown error';
+          const message = extractCopilotErrorMessage(result) || stderrText.trim() || stdout.trim() || 'unknown error';
           reject(new Error(`copilot exited ${code}: ${message}`));
           return;
         }
@@ -189,7 +183,7 @@ export const copilotRunner = {
       });
     });
 
-    const summary = summarizeEvents(events);
+    const summary = summarizeCopilotEvents(events);
     return {
       text: summary.text,
       metadata: {

@@ -2,26 +2,62 @@ import { spawn } from 'node:child_process';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 const ALLOWED_PERMISSION_MODES = new Set(['bypassPermissions']);
+const READ_ONLY_DENY_TOOLS = ['Write', 'Edit', 'Bash', 'NotebookEdit'];
+
+export function buildClaudePermissionArgs(securityPolicy = {}, permissionMode = '') {
+  // Legacy escape hatch: when permission_mode is explicitly set on the agent or
+  // step, honor it as-is and skip the security_policy mapping. This preserves
+  // backward compatibility with pipelines authored before security_policy
+  // support landed.
+  if (permissionMode) {
+    if (!ALLOWED_PERMISSION_MODES.has(permissionMode)) {
+      throw new Error(`unsupported Claude permission_mode: ${permissionMode}`);
+    }
+    return ['--permission-mode', permissionMode];
+  }
+
+  const profile = securityPolicy.profile || 'workspace-write';
+  const args = [];
+
+  if (profile === 'dangerous') {
+    args.push('--permission-mode', 'bypassPermissions');
+    return args;
+  }
+
+  if (profile === 'read-only') {
+    args.push('--disallowedTools', READ_ONLY_DENY_TOOLS.join(','));
+    return args;
+  }
+
+  // restricted-write & workspace-write: Claude Code does not support per-path
+  // tool filtering, so we let it edit and rely on Singleton's post-run snapshot
+  // diff to reject writes outside allowed_paths. acceptEdits avoids interactive
+  // prompts in -p mode.
+  args.push('--permission-mode', 'acceptEdits');
+  return args;
+}
 
 export const claudeRunner = {
   id: 'claude',
   command: 'claude',
 
-  async run({ cwd, systemPrompt, userPrompt, model, permissionMode = '', timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  async run({
+    cwd,
+    systemPrompt,
+    userPrompt,
+    model,
+    permissionMode = '',
+    securityPolicy,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  }) {
     const args = [
       '-p',
       '--output-format',
       'json',
       '--system-prompt',
       systemPrompt,
+      ...buildClaudePermissionArgs(securityPolicy, permissionMode),
     ];
-
-    if (permissionMode) {
-      if (!ALLOWED_PERMISSION_MODES.has(permissionMode)) {
-        throw new Error(`unsupported Claude permission_mode: ${permissionMode}`);
-      }
-      args.push('--permission-mode', permissionMode);
-    }
 
     if (model) args.push('--model', model);
 

@@ -52,6 +52,21 @@ describe('parseAgentFile', () => {
     expect(a.prompt).toContain('<alpha>');
   });
 
+  it('accepts opencode_agent as a provider-specific runner agent alias', () => {
+    const a = parseAgentFile(`## Config
+
+- **id**: opencode-reviewer
+- **description**: Reviews with OpenCode
+- **inputs**: request
+- **outputs**: report
+- **provider**: opencode
+- **opencode_agent**: reviewer
+`, '/tmp/agent.md');
+
+    expect(a.runner_agent).toBe('reviewer');
+    expect(a.opencode_agent).toBe('reviewer');
+  });
+
   it('strips YAML frontmatter', () => {
     const withFrontmatter = `---
 foo: bar

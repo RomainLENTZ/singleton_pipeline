@@ -1,0 +1,8 @@
+{
+  "default_profile": "read-only",
+  "blocked_paths": [".env", ".env.*", ".git", "node_modules", "dist"],
+  "commit": {
+    "exclude_paths": [".singleton", "node_modules", "dist"],
+    "require_confirmation": true
+  }
+}

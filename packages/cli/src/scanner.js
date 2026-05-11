@@ -5,13 +5,15 @@ import { parseAgentFile } from './parser.js';
 const SOURCES = [
   { kind: 'singleton', pattern: '.singleton/agents/*.md', priority: 3 },
   { kind: 'claude', pattern: '.claude/agents/*.md', priority: 2 },
+  { kind: 'copilot', pattern: '.github/agents/*.md', priority: 2 },
+  { kind: 'opencode', pattern: '.opencode/agents/*.md', priority: 2 },
 ];
 
 function normalizeAgent(agent, source) {
-    return {
+  return {
     ...agent,
     source,
-    provider: agent.provider || (source === 'claude' ? 'claude' : undefined),
+    provider: agent.provider || (['claude', 'copilot', 'opencode'].includes(source) ? source : undefined),
   };
 }
 

@@ -25,10 +25,17 @@ const COPILOT_MODELS = [
   { name: 'gpt-4.1', value: 'gpt-4.1' },
   CHOICE_NONE,
 ];
+const OPENCODE_MODELS = [
+  { name: 'ollama/qwen2.5-coder:14b', value: 'ollama/qwen2.5-coder:14b' },
+  { name: 'ollama/qwen2.5-coder:7b', value: 'ollama/qwen2.5-coder:7b' },
+  { name: 'anthropic/claude-sonnet-4-6', value: 'anthropic/claude-sonnet-4-6' },
+  CHOICE_NONE,
+];
 const PROVIDERS = [
   { name: 'claude', value: 'claude' },
   { name: 'codex', value: 'codex' },
   { name: 'copilot', value: 'copilot' },
+  { name: 'opencode', value: 'opencode' },
 ];
 const CLAUDE_PERMISSION_MODES = [
   { name: '(safe default)', value: '' },
@@ -38,6 +45,7 @@ const DEFAULT_AGENTS_DIR = '.singleton/agents';
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6';
 const CODEX_DEFAULT_MODEL = 'gpt-5.4';
 const COPILOT_DEFAULT_MODEL = 'gpt-5.4-mini';
+const OPENCODE_DEFAULT_MODEL = 'ollama/qwen2.5-coder:14b';
 
 function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort();
@@ -85,6 +93,7 @@ function validateAgentId(existingIds, value) {
 function defaultModelForProvider(provider) {
   if (provider === 'codex') return CODEX_DEFAULT_MODEL;
   if (provider === 'copilot') return COPILOT_DEFAULT_MODEL;
+  if (provider === 'opencode') return OPENCODE_DEFAULT_MODEL;
   return CLAUDE_DEFAULT_MODEL;
 }
 
@@ -99,7 +108,7 @@ function normalizeAgentDraft(draft) {
     outputs: uniqueSorted(draft.outputs || []),
     tags: uniqueSorted(draft.tags || []),
     permissionMode: draft.provider === 'claude' ? (draft.permissionMode || '') : '',
-    runnerAgent: draft.provider === 'copilot' ? (draft.runnerAgent || '') : '',
+    runnerAgent: ['copilot', 'opencode'].includes(draft.provider) ? (draft.runnerAgent || '') : '',
     model: draft.model || '',
     estimatedTokens: draft.estimatedTokens || '',
   };
@@ -137,6 +146,7 @@ async function askShellValue(shell, message, { defaultValue = '', validate = nul
 function modelChoicesForProvider(provider) {
   if (provider === 'codex') return CODEX_MODELS;
   if (provider === 'copilot') return COPILOT_MODELS;
+  if (provider === 'opencode') return OPENCODE_MODELS;
   return CLAUDE_MODELS;
 }
 
@@ -265,7 +275,7 @@ export async function newAgentCommand(opts) {
         default: '',
       })
     : '';
-  const runnerAgent = provider === 'copilot'
+  const runnerAgent = ['copilot', 'opencode'].includes(provider)
     ? await input({
         message: 'runner_agent',
         default: id,
@@ -359,7 +369,7 @@ export async function newAgentShellCommand({ root, shell }) {
   const permissionMode = provider === 'claude'
     ? await askShellChoice(shell, 'permission_mode', permissionChoicesForProvider(provider), '')
     : '';
-  const runnerAgent = provider === 'copilot'
+  const runnerAgent = ['copilot', 'opencode'].includes(provider)
     ? await askShellValue(shell, 'runner_agent', { defaultValue: id })
     : '';
 

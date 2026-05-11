@@ -202,7 +202,7 @@ const SINGLETON_RAW = [
 ];
 
 const ART_WIDTH = Math.max(...SINGLETON_RAW.map((l) => l.length));
-const APP_VERSION = 'v0.3.0-beta.0';
+const APP_VERSION = 'v0.4.0-beta.0';
 
 async function showWelcome(root, shell) {
   const now     = new Date();
@@ -229,6 +229,8 @@ async function showWelcome(root, shell) {
     `{${C.ghost}-fg}·{/} {${C.mint}-fg}pause steps{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}inspect prompts{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}edit inputs{/}  {${C.ghost}-fg}·{/} {${C.violet}-fg}review diffs{/}`,
     `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}Copilot runner support{/}`,
     `{${C.ghost}-fg}·{/} {${C.mint}-fg}provider copilot{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}runner_agent optional{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}native tool permissions{/}`,
+    `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}experimental OpenCode runner support{/}`,
+    `{${C.ghost}-fg}·{/} {${C.mint}-fg}provider opencode{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}runner_agent optional{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}post-run security{/}`,
     '',
   ];
   const TAGLINE  = 'one to rule them all';
@@ -369,6 +371,15 @@ async function cmdLs(root, shell) {
   shell.log('');
 }
 
+function groupAgentsByProvider(agents) {
+  return agents.reduce((groups, agent) => {
+    const provider = agent.provider || 'unknown';
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(agent);
+    return groups;
+  }, new Map());
+}
+
 async function cmdScan(root, shell) {
   shell.log(`{${C.dimV}-fg}Scanning ${root}…{/}`);
   const agents = await scanAgents(root);
@@ -378,11 +389,20 @@ async function cmdScan(root, shell) {
   }
   shell.log(`{bold}Agents (${agents.length}){/}`);
   shell.log('');
-  agents.forEach((a, index) => {
-    shell.log(`  {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(no description)'}{/}`);
-    shell.log(`  {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.provider ? `   {${C.peach}-fg}{bold}provider{/}: {${C.dimV}-fg}${a.provider}{/}` : ''}${a.permission_mode ? `   {${C.peach}-fg}{bold}permission{/}: {${C.dimV}-fg}${a.permission_mode}{/}` : ''}`);
-    shell.log(`  {${C.mint}-fg}{bold}in{/}: {${C.dimV}-fg}${a.inputs.join(', ') || '—'}{/}   {${C.pink}-fg}{bold}out{/}: {${C.dimV}-fg}${a.outputs.join(', ') || '—'}{/}`);
-    if (index < agents.length - 1) shell.log(`  {${C.dimV}-fg}────────────────────────────────────────{/}`);
+  const groups = groupAgentsByProvider(agents);
+  [...groups.entries()].forEach(([provider, providerAgents]) => {
+    shell.log(`  {${C.dimV}-fg}════════════════════════════════════════{/}`);
+    shell.log(`  {bold}${provider}{/} {${C.dimV}-fg}(${providerAgents.length}){/}`);
+    shell.log(`  {${C.dimV}-fg}════════════════════════════════════════{/}`);
+    shell.log('');
+
+    providerAgents.forEach((a, index) => {
+      shell.log(`    {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(no description)'}{/}`);
+      shell.log(`    {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.permission_mode ? `   {${C.peach}-fg}{bold}permission{/}: {${C.dimV}-fg}${a.permission_mode}{/}` : ''}`);
+      shell.log(`    {${C.mint}-fg}{bold}in{/}: {${C.dimV}-fg}${a.inputs.join(', ') || '—'}{/}   {${C.pink}-fg}{bold}out{/}: {${C.dimV}-fg}${a.outputs.join(', ') || '—'}{/}`);
+      if (index < providerAgents.length - 1) shell.log(`    {${C.dimV}-fg}──────────────────────────────────────{/}`);
+    });
+    shell.log('');
   });
   const outPath = path.resolve(root, '.singleton', 'agents.json');
   await fs.mkdir(path.dirname(outPath), { recursive: true });

@@ -47,7 +47,7 @@ vi.mock('./runners/index.js', () => ({
   }),
 }));
 
-import { runPipeline } from './executor.js';
+import { detectSnapshotChanges, runPipeline, validatePostRunChanges } from './executor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AGENT = path.join(__dirname, '__fixtures__/agents/echo.md');
@@ -163,6 +163,80 @@ describe('runPipeline preflight', () => {
     });
 
     await expect(runPipeline(file, { dryRun: true, quiet: true })).rejects.toThrow(/unsupported Claude permission_mode/);
+  });
+
+  it('allows OpenCode read-only steps to override legacy runner agent write tools with native permissions', async () => {
+    await fs.mkdir(path.join(tmpRoot, '.opencode', 'agents'), { recursive: true });
+    await fs.writeFile(path.join(tmpRoot, '.opencode', 'agents', 'unsafe.md'), [
+      '---',
+      'description: Unsafe OpenCode test agent',
+      'tools:',
+      '  write: true',
+      '  edit: false',
+      '  bash: false',
+      '---',
+      '',
+      'Test agent.',
+      '',
+    ].join('\n'));
+
+    const agentFile = path.join(tmpRoot, '.singleton', 'agents', 'opencode-read-only.md');
+    await fs.mkdir(path.dirname(agentFile), { recursive: true });
+    await fs.writeFile(agentFile, [
+      '# OpenCode Read Only',
+      '',
+      '## Config',
+      '',
+      '- **id**: opencode-read-only',
+      '- **description**: OpenCode read-only validation fixture',
+      '- **inputs**: text',
+      '- **outputs**: result',
+      '- **provider**: opencode',
+      '- **model**: ollama/test',
+      '- **runner_agent**: unsafe',
+      '- **security_profile**: read-only',
+      '',
+      '---',
+      '',
+      '## Prompt',
+      '',
+      'Echo.',
+      '',
+    ].join('\n'));
+
+    const file = await writePipeline(tmpRoot, 'opencode-readonly-tools', {
+      name: 'opencode-readonly-tools',
+      nodes: [],
+      steps: [
+        {
+          agent: 'opencode-read-only',
+          agent_file: agentFile,
+          inputs: { text: '$FILE:inputs/sample.md' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, { dryRun: true, quiet: true })).resolves.toBeUndefined();
+  });
+
+  it('fails a step with require_changes when no project file changed', async () => {
+    const file = await writePipeline(tmpRoot, 'requires-changes', {
+      name: 'requires-changes',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          security_profile: 'workspace-write',
+          require_changes: true,
+          inputs: { text: '$FILE:inputs/sample.md' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, { quiet: true })).rejects.toThrow(/requires project file changes/);
   });
 
   it('rejects writes to default blocked paths', async () => {
@@ -717,5 +791,153 @@ describe('runPipeline preflight', () => {
     const raw = await fs.readFile(path.join(latestRun, '01-echo', 'raw-output.md'), 'utf8');
     expect(raw).toContain('Invalid $FILES JSON');
     expect(raw).toContain('not json');
+  });
+});
+
+describe('Layer 3 — post-run snapshot diff catches violations without LLM cooperation', () => {
+  // These tests prove that even if Layer 1 (prompt-level policy) and Layer 2
+  // (runner-native permissions) are bypassed — e.g. a future jailbreak, a buggy
+  // runner, a runner that has no per-path filter like Claude or Codex — the
+  // orchestrator's post-run snapshot diff still detects out-of-bounds writes
+  // and produces violations. No LLM is involved here, only deterministic file
+  // state comparison.
+
+  function step(allowedPaths = ['src']) {
+    return {
+      agent: 'test-step',
+      security_profile: 'restricted-write',
+      allowed_paths: allowedPaths,
+    };
+  }
+
+  function snapshot(entries) {
+    return new Map(Object.entries(entries));
+  }
+
+  it('detects a write outside allowed_paths even though the runner reported success', () => {
+    const before = snapshot({ 'src/landing.js': 'sha-A', 'secrets/api-keys.txt': 'sha-X' });
+    const after = snapshot({ 'src/landing.js': 'sha-A', 'secrets/api-keys.txt': 'sha-X-leaked' });
+    const cwd = '/repo';
+
+    const changes = detectSnapshotChanges(before, after, cwd);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].relPath).toBe('secrets/api-keys.txt');
+
+    const violations = validatePostRunChanges({
+      changes,
+      securityPolicy: {
+        profile: 'restricted-write',
+        allowedPaths: ['src/landing.js'],
+        blockedPaths: [],
+      },
+      step: step(['src/landing.js']),
+      cwd,
+    });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].path).toBe('secrets/api-keys.txt');
+    expect(violations[0].reason).toMatch(/outside allowed_paths/);
+  });
+
+  it('detects file creation in a forbidden directory', () => {
+    const before = snapshot({});
+    const after = snapshot({ '.git/hooks/post-commit': 'sha-new' });
+    const cwd = '/repo';
+
+    const changes = detectSnapshotChanges(before, after, cwd);
+    const violations = validatePostRunChanges({
+      changes,
+      securityPolicy: {
+        profile: 'restricted-write',
+        allowedPaths: ['src'],
+        blockedPaths: ['.git'],
+      },
+      step: step(),
+      cwd,
+    });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].path).toBe('.git/hooks/post-commit');
+  });
+
+  it('returns no violations when every change lands inside allowed_paths', () => {
+    const before = snapshot({ 'src/landing.js': 'sha-A' });
+    const after = snapshot({
+      'src/landing.js': 'sha-B',
+      'src/new-helper.js': 'sha-C',
+    });
+    const cwd = '/repo';
+
+    const changes = detectSnapshotChanges(before, after, cwd);
+    expect(changes).toHaveLength(2);
+
+    const violations = validatePostRunChanges({
+      changes,
+      securityPolicy: {
+        profile: 'restricted-write',
+        allowedPaths: ['src'],
+        blockedPaths: [],
+      },
+      step: step(),
+      cwd,
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it('flags every modified file when the profile is read-only, even inside allowed_paths', () => {
+    const before = snapshot({ 'src/landing.js': 'sha-A' });
+    const after = snapshot({ 'src/landing.js': 'sha-B' });
+    const cwd = '/repo';
+
+    const changes = detectSnapshotChanges(before, after, cwd);
+    const violations = validatePostRunChanges({
+      changes,
+      securityPolicy: {
+        profile: 'read-only',
+        allowedPaths: ['src'],
+        blockedPaths: [],
+      },
+      step: { ...step(), security_profile: 'read-only' },
+      cwd,
+    });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].reason).toMatch(/blocked by read-only/);
+  });
+
+  it('returns multiple violations when several writes break the policy', () => {
+    const before = snapshot({});
+    const after = snapshot({
+      'secrets/api-keys.txt': 'leaked',
+      '.env': 'leaked',
+      'src/landing.js': 'ok-this-one-is-fine',
+    });
+    const cwd = '/repo';
+
+    const changes = detectSnapshotChanges(before, after, cwd);
+    const violations = validatePostRunChanges({
+      changes,
+      securityPolicy: {
+        profile: 'restricted-write',
+        allowedPaths: ['src'],
+        blockedPaths: ['.env'],
+      },
+      step: step(),
+      cwd,
+    });
+
+    expect(violations).toHaveLength(2);
+    const paths = violations.map((v) => v.path).sort();
+    expect(paths).toEqual(['.env', 'secrets/api-keys.txt']);
+  });
+
+  it('detectSnapshotChanges ignores unchanged files', () => {
+    const before = snapshot({ 'src/a.js': 'sha-1', 'src/b.js': 'sha-2' });
+    const after = snapshot({ 'src/a.js': 'sha-1', 'src/b.js': 'sha-2-modified' });
+
+    const changes = detectSnapshotChanges(before, after, '/repo');
+    expect(changes).toHaveLength(1);
+    expect(changes[0].relPath).toBe('src/b.js');
   });
 });

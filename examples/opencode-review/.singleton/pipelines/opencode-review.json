@@ -1,0 +1,50 @@
+{
+  "name": "opencode-review",
+  "nodes": [
+    {
+      "id": "input-request",
+      "type": "input",
+      "position": { "x": 60, "y": 80 },
+      "data": {
+        "subtype": "text",
+        "label": "Review request",
+        "value": "Review the target file and identify the highest-impact improvement."
+      }
+    },
+    {
+      "id": "input-target-path",
+      "type": "input",
+      "position": { "x": 60, "y": 220 },
+      "data": {
+        "subtype": "text",
+        "label": "Target file path",
+        "value": "src/example.ts"
+      }
+    },
+    {
+      "id": "input-target-file",
+      "type": "input",
+      "position": { "x": 60, "y": 360 },
+      "data": {
+        "subtype": "file",
+        "label": "Target file content",
+        "value": ""
+      }
+    }
+  ],
+  "steps": [
+    {
+      "agent": "opencode-code-reviewer",
+      "agent_file": ".singleton/agents/opencode-code-reviewer.md",
+      "security_profile": "read-only",
+      "inputs": {
+        "request": "$INPUT:input-request",
+        "target_file": "$INPUT:input-target-file",
+        "target_path": "$INPUT:input-target-path"
+      },
+      "outputs": {
+        "review_report": "$FILE:.singleton/output/review-report.md"
+      }
+    }
+  ]
+}

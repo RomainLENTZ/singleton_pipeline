@@ -109,9 +109,9 @@ Your prompt here.
 - `inputs` — comma-separated list of logical inputs exposed to the prompt
 - `outputs` — comma-separated list of logical outputs expected from the step
 - `tags` — optional categorization
-- `provider` — execution backend, currently `claude`, `codex`, or `copilot`
+- `provider` — execution backend, currently `claude`, `codex`, `copilot`, or experimental `opencode`
 - `model` — provider-specific model name
-- `runner_agent` — provider-side agent name; currently used by Copilot's `--agent` option
+- `runner_agent` — provider-side agent name; currently used by Copilot and OpenCode `--agent` options
 - `permission_mode` — applies to Claude only, ignored for Codex runs
 - `estimated_tokens` — optional metadata for planning
 - `security_profile` — Singleton write policy profile
@@ -132,11 +132,11 @@ Model resolution:
 2. `agent.model`
 3. no explicit model
 
-Runner agent resolution (Copilot only):
+Runner agent resolution (Copilot and OpenCode):
 
 1. `step.runner_agent`
 2. `agent.runner_agent`
-3. no explicit runner agent, so Copilot uses its default agent
+3. no explicit runner agent, so the provider uses its default agent
 
 Permission mode resolution (Claude only):
 
@@ -168,6 +168,7 @@ Singleton has its own project-root policy layer. It is separate from provider pe
 - `permission_mode` is provider-specific. Today it mainly matters for Claude, for example `bypassPermissions`.
 - A step can therefore show `restricted-write · perm:bypassPermissions`: Claude is allowed to use write tools, but Singleton still validates and monitors the allowed paths.
 - Copilot receives provider-native tool permissions generated from the resolved Singleton policy.
+- OpenCode receives provider-native permissions through runtime config, and Singleton still applies write-time and post-run validation afterwards.
 
 ### Security profiles
 
@@ -326,6 +327,25 @@ restricted-write + allowed_paths: src, vite.config.ts
 ```
 
 Copilot permissions reduce risk before the step runs. Singleton still performs write-time and post-run validation afterwards.
+
+### OpenCode security status
+
+For `provider: opencode`, Singleton runs the local OpenCode CLI in non-interactive mode.
+
+Current V1 behavior:
+
+- `security_profile: dangerous` passes `--dangerously-skip-permissions`
+- every other profile avoids broad OpenCode permission bypass
+- Singleton injects OpenCode native permissions through `OPENCODE_CONFIG_CONTENT`
+- if `runner_agent` is set, Singleton also injects the same permissions under `agent.<runner_agent>.permission`
+- `read-only` maps to `edit: deny`, `bash: deny`, `webfetch: deny`, `websearch: deny`, and `external_directory: deny`
+- `restricted-write` maps `allowed_paths` to OpenCode `edit` path rules
+- `workspace-write` allows edit operations inside the workspace while keeping `external_directory` denied
+- Singleton still validates declared `$FILE` / `$FILES` sinks before writing
+- Singleton still detects real project file changes after each step
+- read-only and restricted-write violations are blocked by Singleton post-run validation
+
+OpenCode permissions are provider-native, but Singleton still keeps write-time and post-run validation as a second layer.
 
 ### Security violations
 
@@ -797,6 +817,28 @@ If `runner_agent` is omitted, Singleton does not pass `--agent`, and Copilot use
 
 In nested demo projects or monorepos, Copilot resolves repo-level agents from the git root it detects. If your pipeline project is nested inside another git repository, either make the nested project a git repository too or place the `.github/agents/*.agent.md` profile at the parent git root.
 
+### OpenCode
+
+- executes through the local `opencode` CLI
+- runs non-interactively through `opencode run`
+- supports `model` in OpenCode's `provider/model` format
+- supports optional `runner_agent`, mapped to OpenCode's `--agent` option
+- captures JSON events with `--format json` when available
+- maps Singleton security profiles to OpenCode native `permission` config through `OPENCODE_CONFIG_CONTENT`
+- uses Singleton write-time and post-run validation as a second security layer
+- only passes `--dangerously-skip-permissions` for `security_profile: dangerous`
+
+Example:
+
+```markdown
+- **provider**: opencode
+- **model**: ollama/qwen2.5-coder:14b
+- **runner_agent**: reviewer
+- **security_profile**: read-only
+```
+
+If `runner_agent` is omitted, Singleton does not pass `--agent`, and OpenCode uses its default agent.
+
 ## CLI commands
 
 Global flags: every command supports `--help`.
@@ -922,7 +964,7 @@ Cycles are rejected at save time.
 
 ## Full pipeline example
 
-Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For executable examples, see `examples/claude-code-review/`, `examples/codex-code-review/`, `examples/mixed-code-review/`, and `examples/frontend-audit/`.
+Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For executable examples, see `examples/claude-code-review/`, `examples/codex-code-review/`, `examples/mixed-code-review/`, `examples/frontend-audit/`, and `examples/opencode-review/`.
 
 A two-step pipeline: a generator writes code from a spec, a reviewer reads that code and emits a report.
 
@@ -974,7 +1016,7 @@ See `examples/mixed-code-review/` for an end-to-end example using both Claude an
 
 ## Troubleshooting
 
-**`claude: command not found` (or `codex: command not found`) during preflight**
+**`claude: command not found` (or another provider CLI is missing) during preflight**
 The corresponding CLI is not in `$PATH`. Install it and ensure it runs standalone before retrying. Singleton never installs or upgrades provider CLIs.
 
 **Provider call fails immediately with an auth error**
