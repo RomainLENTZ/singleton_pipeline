@@ -1,5 +1,4 @@
-import { spawn } from 'node:child_process';
-import { resolveBinary } from './_shared.js';
+import spawn from 'cross-spawn';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 const ALLOWED_PERMISSION_MODES = new Set(['bypassPermissions']);
@@ -63,7 +62,7 @@ export const claudeRunner = {
     if (model) args.push('--model', model);
 
     const raw = await new Promise((resolve, reject) => {
-      const child = spawn(resolveBinary('claude'), args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32' });
+      const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
