@@ -81,14 +81,15 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
-export function buildCopilotArgs({ model, runnerAgent, securityPolicy = {} } = {}) {
-  // Prompt is written to stdin (see copilotRunner.run) instead of being passed
-  // as `-p <prompt>`. This avoids the Windows command-line length limit (~32KB)
-  // that hits as soon as the scout's context.md is injected into downstream
-  // prompts.
+export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
+  // Copilot CLI expects the user prompt as `-p <text>`. `-p -` is interpreted
+  // as the literal string "-" (not stdin), so we pass the actual prompt here.
+  // Callers are responsible for keeping the prompt under the platform arg
+  // length limit (Windows ~32KB) — large context blobs should be referenced
+  // as files on disk rather than inlined.
   const args = [
     '-p',
-    '-',
+    prompt ?? '',
     '--output-format',
     'json',
     ...buildCopilotPermissionArgs(securityPolicy),
@@ -147,15 +148,13 @@ export const copilotRunner = {
     timeoutMs = DEFAULT_TIMEOUT_MS,
   }) {
     // When --agent is used, Copilot loads the system prompt from .github/agents/<name>.md.
-    // Sending Singleton's combined <system>...<user>...</user> stdin in that case
-    // duplicates the system instructions and buries the user inputs in noise. So we
-    // pipe ONLY the user prompt when runnerAgent is set — this matches the pattern
-    // `copilot -p "<user_message>" --agent <name>` used in standalone bash scripts.
+    // We pass only the user prompt as `-p <text>` to match the `copilot -p "<msg>" --agent <name>`
+    // pattern. When --agent is not used we inline the system prompt with our XML wrappers.
     const prompt = runnerAgent ? userPrompt : buildPrompt(systemPrompt, userPrompt);
-    const args = buildCopilotArgs({ model, runnerAgent, securityPolicy });
+    const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn('copilot', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;
@@ -165,15 +164,6 @@ export const copilotRunner = {
         child.kill('SIGTERM');
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
-
-      // Silence EPIPE/EOF if the child process exits before consuming stdin
-      // (e.g. copilot rejects the args, hits an internal limit, or crashes).
-      // We surface the real reason via the 'close' handler with exit code + stderr.
-      child.stdin.on('error', () => { /* swallowed — see close handler */ });
-      try {
-        child.stdin.write(prompt);
-        child.stdin.end();
-      } catch { /* same */ }
 
       child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
       child.stderr.on('data', (d) => (stderrText += d.toString()));
