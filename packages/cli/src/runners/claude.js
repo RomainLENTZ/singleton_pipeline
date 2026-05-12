@@ -63,7 +63,7 @@ export const claudeRunner = {
     if (model) args.push('--model', model);
 
     const raw = await new Promise((resolve, reject) => {
-      const child = spawn(resolveBinary('claude'), args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(resolveBinary('claude'), args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32' });
       let stdout = '';
       let stderr = '';
       let timedOut = false;

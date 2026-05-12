@@ -141,7 +141,7 @@ export const copilotRunner = {
     const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn(resolveBinary('copilot'), args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(resolveBinary('copilot'), args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;

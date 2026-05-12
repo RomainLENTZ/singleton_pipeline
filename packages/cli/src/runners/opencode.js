@@ -199,7 +199,7 @@ export const opencodeRunner = {
     });
 
     const runResult = await new Promise((resolve, reject) => {
-      const child = spawn(resolveBinary('opencode'), args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(resolveBinary('opencode'), args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;

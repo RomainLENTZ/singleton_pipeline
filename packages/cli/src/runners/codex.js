@@ -82,6 +82,7 @@ export const codexRunner = {
       const child = spawn(resolveBinary('codex'), args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
+        shell: process.platform === 'win32',
         env: {
           ...process.env,
           CODEX_HOME: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
