@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { extractText, safeJsonParse } from './_shared.js';
+import { extractText, resolveBinary, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
@@ -141,7 +141,7 @@ export const copilotRunner = {
     const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(resolveBinary('copilot'), args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;

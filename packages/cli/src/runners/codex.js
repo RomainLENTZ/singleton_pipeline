@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { discoverCodexProjectInstructions } from './codex-instructions.js';
-import { findUsage, safeJsonParse } from './_shared.js';
+import { findUsage, resolveBinary, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
@@ -79,7 +79,7 @@ export const codexRunner = {
     const args = buildCodexArgs({ prompt, model, outputFile, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn('codex', args, {
+      const child = spawn(resolveBinary('codex'), args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {

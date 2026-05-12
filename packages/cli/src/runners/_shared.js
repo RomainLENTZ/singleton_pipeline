@@ -3,6 +3,13 @@
 // normalize the common patterns: parsing lines, walking nested events to find
 // usage/cost, and extracting assistant text from messages with varying schemas.
 
+// On Windows, npm-installed CLI binaries are shipped as .cmd wrappers (claude.cmd,
+// copilot.cmd, codex.cmd, opencode.cmd). Node's spawn does not append the extension
+// automatically, so we resolve the platform-specific name here.
+export function resolveBinary(command) {
+  return process.platform === 'win32' ? `${command}.cmd` : command;
+}
+
 export function safeJsonParse(line) {
   try {
     return JSON.parse(line);

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { extractText, findCostUsd, findUsage, safeJsonParse } from './_shared.js';
+import { extractText, findCostUsd, findUsage, resolveBinary, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
@@ -199,7 +199,7 @@ export const opencodeRunner = {
     });
 
     const runResult = await new Promise((resolve, reject) => {
-      const child = spawn('opencode', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(resolveBinary('opencode'), args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;
