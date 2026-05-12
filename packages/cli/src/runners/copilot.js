@@ -76,10 +76,14 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
-export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
+export function buildCopilotArgs({ model, runnerAgent, securityPolicy = {} } = {}) {
+  // Prompt is written to stdin (see copilotRunner.run) instead of being passed
+  // as `-p <prompt>`. This avoids the Windows command-line length limit (~32KB)
+  // that hits as soon as the scout's context.md is injected into downstream
+  // prompts.
   const args = [
     '-p',
-    prompt,
+    '-',
     '--output-format',
     'json',
     ...buildCopilotPermissionArgs(securityPolicy),
@@ -138,10 +142,10 @@ export const copilotRunner = {
     timeoutMs = DEFAULT_TIMEOUT_MS,
   }) {
     const prompt = buildPrompt(systemPrompt, userPrompt);
-    const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
+    const args = buildCopilotArgs({ model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn('copilot', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;
@@ -151,6 +155,9 @@ export const copilotRunner = {
         child.kill('SIGTERM');
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
+
+      child.stdin.write(prompt);
+      child.stdin.end();
 
       child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
       child.stderr.on('data', (d) => (stderrText += d.toString()));

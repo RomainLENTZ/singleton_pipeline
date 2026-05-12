@@ -22,7 +22,7 @@ function groupAgentsByProvider(agents) {
 program
   .name('singleton')
   .description('Singleton Pipeline Builder — scan agents and build pipelines')
-  .version('0.4.0-beta.4');
+  .version('0.4.0-beta.5');
 
 program
   .command('scan')

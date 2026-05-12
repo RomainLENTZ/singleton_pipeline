@@ -1,4 +1,4 @@
-# Singleton Pipeline Builder (v0.4.0-beta.4)
+# Singleton Pipeline Builder (v0.4.0-beta.5)
 
 [![npm version](https://img.shields.io/npm/v/singleton-pipeline/beta.svg)](https://www.npmjs.com/package/singleton-pipeline)
 [![npm downloads](https://img.shields.io/npm/dm/singleton-pipeline.svg)](https://www.npmjs.com/package/singleton-pipeline)

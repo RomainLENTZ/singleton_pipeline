@@ -202,7 +202,7 @@ const SINGLETON_RAW = [
 ];
 
 const ART_WIDTH = Math.max(...SINGLETON_RAW.map((l) => l.length));
-const APP_VERSION = 'v0.4.0-beta.4';
+const APP_VERSION = 'v0.4.0-beta.5';
 
 async function showWelcome(root, shell) {
   const now     = new Date();
