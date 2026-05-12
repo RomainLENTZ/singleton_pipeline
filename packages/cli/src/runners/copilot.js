@@ -146,7 +146,12 @@ export const copilotRunner = {
     securityPolicy,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   }) {
-    const prompt = buildPrompt(systemPrompt, userPrompt);
+    // When --agent is used, Copilot loads the system prompt from .github/agents/<name>.md.
+    // Sending Singleton's combined <system>...<user>...</user> stdin in that case
+    // duplicates the system instructions and buries the user inputs in noise. So we
+    // pipe ONLY the user prompt when runnerAgent is set — this matches the pattern
+    // `copilot -p "<user_message>" --agent <name>` used in standalone bash scripts.
+    const prompt = runnerAgent ? userPrompt : buildPrompt(systemPrompt, userPrompt);
     const args = buildCopilotArgs({ model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
