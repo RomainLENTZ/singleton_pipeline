@@ -81,15 +81,13 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
-export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
-  // Copilot CLI expects the user prompt as `-p <text>`. `-p -` is interpreted
-  // as the literal string "-" (not stdin), so we pass the actual prompt here.
-  // Callers are responsible for keeping the prompt under the platform arg
-  // length limit (Windows ~32KB) — large context blobs should be referenced
-  // as files on disk rather than inlined.
+export function buildCopilotArgs({ model, runnerAgent, securityPolicy = {} } = {}) {
+  // Prompt is written to stdin (see copilotRunner.run). We use `-p -` as the
+  // marker for "read prompt from stdin". This avoids the Windows command-line
+  // length limit (~32KB) when the user message includes large injected context.
   const args = [
     '-p',
-    prompt ?? '',
+    '-',
     '--output-format',
     'json',
     ...buildCopilotPermissionArgs(securityPolicy),
@@ -148,13 +146,14 @@ export const copilotRunner = {
     timeoutMs = DEFAULT_TIMEOUT_MS,
   }) {
     // When --agent is used, Copilot loads the system prompt from .github/agents/<name>.md.
-    // We pass only the user prompt as `-p <text>` to match the `copilot -p "<msg>" --agent <name>`
-    // pattern. When --agent is not used we inline the system prompt with our XML wrappers.
+    // We pipe only the user prompt via stdin in that case (to match the bash
+    // pattern). When --agent is not used we inline the system prompt with the
+    // XML wrappers.
     const prompt = runnerAgent ? userPrompt : buildPrompt(systemPrompt, userPrompt);
-    const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
+    const args = buildCopilotArgs({ model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn('copilot', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;
@@ -164,6 +163,12 @@ export const copilotRunner = {
         child.kill('SIGTERM');
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
+
+      child.stdin.on('error', () => { /* surfaced via close handler */ });
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch { /* same */ }
 
       child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
       child.stderr.on('data', (d) => (stderrText += d.toString()));

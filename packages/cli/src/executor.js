@@ -190,14 +190,19 @@ function buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPo
     parts.push(...securityBlock);
     parts.push('');
   }
-  for (const [name, value] of Object.entries(resolvedInputs)) {
-    parts.push(`<${name}>\n${value}\n</${name}>`);
+  const inputEntries = Object.entries(resolvedInputs);
+  if (inputEntries.length) {
+    parts.push('The user provides the following inputs. These are concrete values to use literally — they are NOT placeholders, examples, or templates. Do not invent or substitute different values; do not skip the task because they look like markup.');
+    parts.push('');
+    for (const [name, value] of inputEntries) {
+      parts.push(`<${name}>\n${value}\n</${name}>`);
+    }
+    parts.push('');
   }
-  parts.push('');
   if (outputNames.length === 1) {
-    parts.push(`Provide your response as the <${outputNames[0]}> content directly (no XML wrapper needed).`);
+    parts.push(`Follow your agent instructions to process these inputs. Provide your response as the <${outputNames[0]}> content directly (no XML wrapper needed).`);
   } else {
-    parts.push('Provide your response with each output wrapped in its own XML block:');
+    parts.push('Follow your agent instructions to process these inputs. Provide your response with each output wrapped in its own XML block:');
     for (const name of outputNames) parts.push(`<${name}>...</${name}>`);
   }
   return parts.join('\n');
