@@ -56,10 +56,15 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
     args.push('--allow-tool=write');
   }
 
+  // Copilot CLI runs in deny-by-default mode as soon as any --allow-tool is
+  // present. Agents need shell access to list/grep the codebase even when their
+  // write surface is restricted — otherwise the scout can't discover anything.
+  // read-only stays shell-less; dangerous is already covered by --allow-all-tools.
   if (profile === 'read-only') {
     args.push('--deny-tool=write');
     args.push('--deny-tool=shell');
   } else {
+    if (profile !== 'dangerous') args.push('--allow-tool=shell');
     args.push('--deny-tool=shell(git push)');
   }
 
