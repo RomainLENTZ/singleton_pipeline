@@ -97,8 +97,11 @@ export const claudeRunner = {
         }
       });
 
-      child.stdin.write(userPrompt);
-      child.stdin.end();
+      child.stdin.on('error', () => { /* surfaced via close handler */ });
+      try {
+        child.stdin.write(userPrompt);
+        child.stdin.end();
+      } catch { /* same */ }
     });
 
     return {

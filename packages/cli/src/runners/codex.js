@@ -128,8 +128,11 @@ export const codexRunner = {
         resolve({ events, stderr: stderrText });
       });
 
-      child.stdin.write(prompt);
-      child.stdin.end();
+      child.stdin.on('error', () => { /* surfaced via close handler */ });
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch { /* same */ }
     });
 
     let text = '';

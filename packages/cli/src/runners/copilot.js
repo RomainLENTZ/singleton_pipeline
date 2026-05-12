@@ -166,8 +166,14 @@ export const copilotRunner = {
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
 
-      child.stdin.write(prompt);
-      child.stdin.end();
+      // Silence EPIPE/EOF if the child process exits before consuming stdin
+      // (e.g. copilot rejects the args, hits an internal limit, or crashes).
+      // We surface the real reason via the 'close' handler with exit code + stderr.
+      child.stdin.on('error', () => { /* swallowed — see close handler */ });
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch { /* same */ }
 
       child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
       child.stderr.on('data', (d) => (stderrText += d.toString()));
