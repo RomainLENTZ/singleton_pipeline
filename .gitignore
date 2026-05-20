@@ -19,6 +19,11 @@ build/
 !docs/
 !docs/**/*.md
 
+# Test fixtures include Markdown agent definitions used by CLI tests.
+!packages/cli/src/__fixtures__/
+!packages/cli/src/__fixtures__/agents/
+!packages/cli/src/__fixtures__/agents/*.md
+
 # Official examples are part of the repository, including Markdown agents and
 # project-local pipeline files. Keep generated caches and runs out.
 !examples/
