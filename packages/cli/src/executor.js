@@ -2020,8 +2020,8 @@ export async function runPipeline(filePath, opts = {}) {
         if (shouldReplay) {
           attempt += 1;
           if (finalAttempt?.stepChanges?.length || finalAttempt?.stepWrites?.length) {
-            timeline.logMuted(`${debugToken.policy('Replay restored project files touched by the previous attempt. Previous run artifacts are kept under their attempt folder.')}`);
-            timeline.logMuted(`${debugToken.key('restored changes')} ${formatDebugList((finalAttempt.stepChanges || []).map((entry) => entry.relPath))}`);
+            timeline.logMuted(`${debugToken.policy('Replay is restoring project files touched by the previous attempt. Previous run artifacts are kept under their attempt folder.')}`);
+            timeline.logMuted(`${debugToken.key('pending restore')} ${formatDebugList((finalAttempt.stepChanges || []).map((entry) => entry.relPath))}`);
             timeline.logMuted(`${debugToken.key('previous artifacts')} ${formatDebugList((finalAttempt.stepWrites || []).map((entry) => entry.relPath))}`);
           }
           if (stepSnapshot && finalAttempt?.stepChanges?.length) {
@@ -2031,6 +2031,10 @@ export async function runPipeline(filePath, opts = {}) {
                 originalPaths: stepOriginalPaths,
                 changes: finalAttempt.stepChanges,
               });
+              timeline.logMuted(`${debugToken.key('restore result')} ` +
+                `${debugToken.key('restored')} ${formatDebugList(result.restored)} ` +
+                `${debugToken.muted('·')} ${debugToken.key('removed')} ${formatDebugList(result.removed)} ` +
+                `${debugToken.muted('·')} ${debugToken.key('skipped')} ${formatDebugList(result.skipped)}`);
               if (result.skipped.length) {
                 timeline.logMuted(`${debugToken.policy('Could not restore (filtered out of snapshot):')} ${formatDebugList(result.skipped)}`);
                 stats.push({

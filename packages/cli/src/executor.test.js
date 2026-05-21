@@ -21,6 +21,12 @@ vi.mock('./runners/index.js', () => ({
         await fsMock.mkdir(pathMock.join(cwd, 'src'), { recursive: true });
         await fsMock.writeFile(pathMock.join(cwd, 'src', 'unexpected.js'), 'export const changed = true;\n');
       }
+      if (userPrompt.includes('WRITE_ROOT_SMOKE')) {
+        const fsMock = await import('node:fs/promises');
+        const pathMock = await import('node:path');
+        await fsMock.writeFile(pathMock.join(cwd, 'tracked.txt'), 'agent dirty\n');
+        await fsMock.writeFile(pathMock.join(cwd, 'agent-created.txt'), 'created by agent\n');
+      }
       if (userPrompt.includes('WRITE_LARGE_PROJECT_FILE')) {
         const fsMock = await import('node:fs/promises');
         const pathMock = await import('node:path');
@@ -769,6 +775,56 @@ describe('runPipeline preflight', () => {
     expect(restoredProjectFile).toBe('export const changed = false;\n');
     expect(finalArtifact).toBe('debug override seen');
     await expect(fs.access(path.join(latestRun, '01-echo', 'attempt-1', 'result.md'))).resolves.toBeUndefined();
+  });
+
+  it('restores project changes before the replay input edit prompt', async () => {
+    const root = await makePipelineRoot();
+    await fs.writeFile(path.join(root, 'tracked.txt'), 'user dirty\n');
+    const file = await writePipeline(root, 'debug-replay-restore-before-edit', {
+      name: 'debug-replay-restore-before-edit',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          security_profile: 'workspace-write',
+          inputs: { text: 'WRITE_ROOT_SMOKE' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+    let postCalls = 0;
+    let checkedDuringEdit = false;
+
+    try {
+      await expect(runPipeline(file, {
+        quiet: true,
+        debug: true,
+        shell: {
+          prompt: async () => {
+            checkedDuringEdit = true;
+            await expect(fs.readFile(path.join(root, 'tracked.txt'), 'utf8')).resolves.toBe('user dirty\n');
+            await expect(fs.access(path.join(root, 'agent-created.txt'))).rejects.toThrow();
+            return '';
+          },
+          log: () => {},
+          enterPipelineMode: () => {},
+          exitPipelineMode: () => {},
+          pipelineWidgets: null,
+        },
+        debugDecision: async () => 'continue',
+        debugPostDecision: async () => {
+          postCalls += 1;
+          return postCalls === 1 ? 'replay' : 'continue';
+        },
+      })).resolves.toBeUndefined();
+
+      expect(checkedDuringEdit).toBe(true);
+      await expect(fs.readFile(path.join(root, 'tracked.txt'), 'utf8')).resolves.toBe('agent dirty\n');
+      await expect(fs.readFile(path.join(root, 'agent-created.txt'), 'utf8')).resolves.toBe('created by agent\n');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('aborts replay when a changed original file was excluded from the snapshot', async () => {
