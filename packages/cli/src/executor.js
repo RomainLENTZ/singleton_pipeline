@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { spawn } from 'node:child_process';
@@ -16,6 +15,13 @@ import {
   resolveSecurityPolicyWithConfig,
   validateSecurityPolicy,
 } from './security/policy.js';
+import {
+  detectSnapshotChanges,
+  formatSnapshotCoverage,
+  SnapshotManager,
+} from './snapshot-manager.js';
+
+export { detectSnapshotChanges } from './snapshot-manager.js';
 
 export async function loadPipeline(filePath) {
   const raw = await fs.readFile(filePath, 'utf8');
@@ -792,6 +798,16 @@ async function logDebugDiffs({ changes, writes = [], cwd, timeline }) {
   }
 }
 
+function logSnapshotCoverage({ snapshot, timeline }) {
+  if (!snapshot) return;
+  const details = formatSnapshotCoverage(snapshot);
+  if (!details.length) return;
+  timeline.logMuted(`${debugToken.key('replay snapshot coverage')} ${formatDebugList(details, 'none')}`);
+  if (snapshot.skippedLarge.length || snapshot.skippedBinary.length || snapshot.skippedIgnored.length) {
+    timeline.logMuted(debugToken.policy('Replay rollback is not fully guaranteed if a skipped file is modified.'));
+  }
+}
+
 async function promptDebugPostStepDecision({
   step,
   parsed,
@@ -1522,202 +1538,6 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
   return lines;
 }
 
-const SNAPSHOT_SKIP_DIRS = new Set([
-  '.git',
-  '.singleton',
-  '.opencode',
-  '.idea',
-  '.vscode',
-  'node_modules',
-  'dist',
-  'build',
-  '.next',
-  '.cache',
-  'coverage',
-]);
-
-async function snapshotProjectFiles(root, rel = '', out = new Map()) {
-  const abs = path.join(root, rel);
-  const entries = await fs.readdir(abs, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (SNAPSHOT_SKIP_DIRS.has(entry.name)) continue;
-      await snapshotProjectFiles(root, path.join(rel, entry.name), out);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    const entryRel = path.join(rel, entry.name);
-    const entryAbs = path.join(root, entryRel);
-    const stat = await fs.stat(entryAbs);
-    out.set(entryRel, `${stat.size}:${Math.floor(stat.mtimeMs)}`);
-  }
-  return out;
-}
-
-const SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
-const SNAPSHOT_BINARY_PROBE_BYTES = 8192;
-
-async function detectGitRepo(cwd) {
-  try {
-    await runCommand('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function gitFilterIgnoredPaths(root, relPaths) {
-  if (!relPaths.length) return new Set();
-  const posix = relPaths.map((p) => p.split(path.sep).join('/'));
-  const ignored = new Set();
-  await new Promise((resolve) => {
-    const child = spawn('git', ['check-ignore', '--stdin'], {
-      cwd: root,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    });
-    let stdout = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.on('error', () => resolve());
-    child.on('close', () => {
-      for (const line of stdout.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed) ignored.add(trimmed);
-      }
-      resolve();
-    });
-    child.stdin.write(posix.join('\n'));
-    child.stdin.end();
-  });
-  if (!ignored.size) return new Set();
-  const result = new Set();
-  for (let i = 0; i < relPaths.length; i++) {
-    if (ignored.has(posix[i])) result.add(relPaths[i]);
-  }
-  return result;
-}
-
-async function isProbablyBinaryFile(absPath) {
-  let fd;
-  try {
-    fd = await fs.open(absPath, 'r');
-    const buf = Buffer.alloc(SNAPSHOT_BINARY_PROBE_BYTES);
-    const { bytesRead } = await fd.read(buf, 0, SNAPSHOT_BINARY_PROBE_BYTES, 0);
-    for (let i = 0; i < bytesRead; i++) {
-      if (buf[i] === 0) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  } finally {
-    if (fd) await fd.close().catch(() => {});
-  }
-}
-
-async function collectSnapshotCandidates(root, rel = '', out = []) {
-  const abs = path.join(root, rel);
-  const entries = await fs.readdir(abs, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (SNAPSHOT_SKIP_DIRS.has(entry.name)) continue;
-      await collectSnapshotCandidates(root, path.join(rel, entry.name), out);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    const entryRel = path.join(rel, entry.name);
-    const entryAbs = path.join(root, entryRel);
-    let size = 0;
-    try {
-      const stat = await fs.stat(entryAbs);
-      size = stat.size;
-    } catch {
-      continue;
-    }
-    out.push({ relPath: entryRel, absPath: entryAbs, size });
-  }
-  return out;
-}
-
-async function createStepSnapshot({ root, snapshotDir, gitRepo, maxFileBytes = SNAPSHOT_MAX_FILE_BYTES }) {
-  await fs.mkdir(snapshotDir, { recursive: true });
-  const candidates = await collectSnapshotCandidates(root);
-  const ignored = gitRepo
-    ? await gitFilterIgnoredPaths(root, candidates.map((c) => c.relPath))
-    : new Set();
-
-  const captured = new Set();
-  const skippedLarge = [];
-  const skippedBinary = [];
-  const skippedIgnored = [];
-
-  for (const { relPath, absPath, size } of candidates) {
-    if (ignored.has(relPath)) {
-      skippedIgnored.push(relPath);
-      continue;
-    }
-    if (size > maxFileBytes) {
-      skippedLarge.push(relPath);
-      continue;
-    }
-    if (await isProbablyBinaryFile(absPath)) {
-      skippedBinary.push(relPath);
-      continue;
-    }
-    const dest = path.join(snapshotDir, relPath);
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    try {
-      await fs.copyFile(absPath, dest, fsConstants.COPYFILE_FICLONE);
-    } catch {
-      try {
-        await fs.copyFile(absPath, dest);
-      } catch {
-        continue;
-      }
-    }
-    captured.add(relPath);
-  }
-
-  return { snapshotDir, captured, skippedLarge, skippedBinary, skippedIgnored };
-}
-
-export function detectSnapshotChanges(before, after, root) {
-  const changed = [];
-  const paths = new Set([...before.keys(), ...after.keys()]);
-  for (const relPath of paths) {
-    const beforeSig = before.get(relPath);
-    const afterSig = after.get(relPath);
-    if (beforeSig === afterSig) continue;
-    changed.push({
-      relPath,
-      absPath: path.join(root, relPath),
-      kind: 'deliverable',
-    });
-  }
-  return changed;
-}
-
-async function restoreStepSnapshot({ root, snapshot, originalPaths, changes }) {
-  const restored = [];
-  const removed = [];
-  const skipped = [];
-  for (const change of changes) {
-    const relPath = change?.relPath;
-    if (!relPath) continue;
-    const absPath = path.join(root, relPath);
-    if (snapshot.captured.has(relPath)) {
-      const src = path.join(snapshot.snapshotDir, relPath);
-      await fs.mkdir(path.dirname(absPath), { recursive: true });
-      await fs.copyFile(src, absPath);
-      restored.push(relPath);
-    } else if (originalPaths.has(relPath)) {
-      skipped.push(relPath);
-    } else {
-      await fs.rm(absPath, { recursive: true, force: true });
-      removed.push(relPath);
-    }
-  }
-  return { restored, removed, skipped };
-}
-
 export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
   const violations = [];
   for (const change of changes) {
@@ -1893,9 +1713,9 @@ export async function runPipeline(filePath, opts = {}) {
     ? Math.max(0, opts.maxDebugReplays)
     : DEFAULT_MAX_DEBUG_REPLAYS;
   const securityConfig = await loadProjectSecurityConfig(cwd);
-  const beforeSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
+  const snapshotManager = dryRun ? null : await SnapshotManager.create({ root: cwd });
+  const beforeSnapshot = dryRun ? null : await snapshotManager.captureState();
   let currentSnapshot = beforeSnapshot;
-  const isGitRepo = !dryRun && await detectGitRepo(cwd);
 
   // Versioned workspace for this run — intermediate artifacts land here.
   const now = new Date();
@@ -2191,14 +2011,9 @@ export async function runPipeline(filePath, opts = {}) {
       );
       const stepSnapshotDir = debug && stepDir ? path.join(stepDir, '.snapshot') : null;
       const stepSnapshot = stepSnapshotDir
-        ? await createStepSnapshot({ root: cwd, snapshotDir: stepSnapshotDir, gitRepo: isGitRepo })
+        ? await snapshotManager.createRestoreSnapshot({ snapshotDir: stepSnapshotDir })
         : null;
-      if (stepSnapshot && (stepSnapshot.skippedLarge.length || stepSnapshot.skippedBinary.length || stepSnapshot.skippedIgnored.length)) {
-        timeline.logMuted(`${debugToken.muted('Replay snapshot skipped:')} ` +
-          `${debugToken.key('large')} ${stepSnapshot.skippedLarge.length} ` +
-          `${debugToken.muted('·')} ${debugToken.key('binary')} ${stepSnapshot.skippedBinary.length} ` +
-          `${debugToken.muted('·')} ${debugToken.key('gitignored')} ${stepSnapshot.skippedIgnored.length}`);
-      }
+      logSnapshotCoverage({ snapshot: stepSnapshot, timeline });
       const stepOriginalPaths = currentSnapshot ? new Set(currentSnapshot.keys()) : new Set();
 
       do {
@@ -2211,8 +2026,7 @@ export async function runPipeline(filePath, opts = {}) {
           }
           if (stepSnapshot && finalAttempt?.stepChanges?.length) {
             try {
-              const result = await restoreStepSnapshot({
-                root: cwd,
+              const result = await snapshotManager.restore({
                 snapshot: stepSnapshot,
                 originalPaths: stepOriginalPaths,
                 changes: finalAttempt.stepChanges,
@@ -2239,7 +2053,7 @@ export async function runPipeline(filePath, opts = {}) {
                   `Replay restore incomplete before step "${step.agent}" attempt ${attempt}. These changed files were excluded from the snapshot:\n- ${result.skipped.join('\n- ')}`
                 );
               }
-              currentSnapshot = await snapshotProjectFiles(cwd);
+              currentSnapshot = await snapshotManager.captureState();
             } catch (err) {
               stats.push({
                 agent: step.agent,
@@ -2477,8 +2291,8 @@ export async function runPipeline(filePath, opts = {}) {
       const attemptWrites = fileWrites.slice(stepWritesStart);
       let stepChanges = [];
       if (stepBeforeSnapshot) {
-        const stepAfterSnapshot = await snapshotProjectFiles(cwd);
-        stepChanges = detectSnapshotChanges(stepBeforeSnapshot, stepAfterSnapshot, cwd);
+        const stepAfterSnapshot = await snapshotManager.captureState();
+        stepChanges = snapshotManager.detectChanges(stepBeforeSnapshot, stepAfterSnapshot);
         const violations = validatePostRunChanges({
           changes: stepChanges,
           securityPolicy,
@@ -2640,8 +2454,8 @@ export async function runPipeline(filePath, opts = {}) {
     if (shell) shell.exitPipelineMode();
   }
 
-  const finalSnapshot = dryRun ? null : await snapshotProjectFiles(cwd);
-  const detectedDeliverables = dryRun ? [] : detectSnapshotChanges(beforeSnapshot, finalSnapshot, cwd);
+  const finalSnapshot = dryRun ? null : await snapshotManager.captureState();
+  const detectedDeliverables = dryRun ? [] : snapshotManager.detectChanges(beforeSnapshot, finalSnapshot);
   currentSnapshot = finalSnapshot || currentSnapshot;
   const runStatus = runError ? 'failed' : (dryRun ? 'dry-run' : 'done');
 
