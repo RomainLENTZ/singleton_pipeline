@@ -81,13 +81,15 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
-export function buildCopilotArgs({ model, runnerAgent, securityPolicy = {} } = {}) {
-  // Prompt is written to stdin (see copilotRunner.run). We use `-p -` as the
-  // marker for "read prompt from stdin". This avoids the Windows command-line
-  // length limit (~32KB) when the user message includes large injected context.
+export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
+  // Copilot CLI expects the user prompt as `-p <text>` arg. Passing `-p -` is
+  // interpreted as the literal string "-", not as a stdin marker, so we always
+  // inline the prompt as an argument here. Callers must keep the prompt under
+  // ~32KB on Windows — large blobs (scout output, etc.) should be referenced
+  // as files on disk rather than injected inline.
   const args = [
     '-p',
-    '-',
+    prompt ?? '',
     '--output-format',
     'json',
     ...buildCopilotPermissionArgs(securityPolicy),
@@ -98,10 +100,13 @@ export function buildCopilotArgs({ model, runnerAgent, securityPolicy = {} } = {
 }
 
 export function summarizeCopilotEvents(events) {
-  const assistantMessages = events
-    .filter((event) => event.type === 'assistant.message')
-    .map((event) => extractText(event.data))
-    .filter(Boolean);
+  // Copilot emits intermediate `assistant.message` events between tool calls
+  // (the model's "thinking out loud"). The final deliverable is the LAST
+  // assistant.message — concatenating them all would prepend narration noise
+  // to whatever the agent is supposed to produce as its output.
+  const assistantMessages = events.filter((event) => event.type === 'assistant.message');
+  const finalMessage = assistantMessages.at(-1);
+  const finalText = finalMessage ? extractText(finalMessage.data) : '';
   const deltaText = events
     .filter((event) => event.type === 'assistant.message_delta')
     .map((event) => event.data?.deltaContent || event.data?.delta || '')
@@ -114,8 +119,8 @@ export function summarizeCopilotEvents(events) {
   }, 0);
 
   return {
-    text: assistantMessages.join('\n').trim() || deltaText.trim(),
-    turns: events.filter((event) => event.type === 'assistant.message').length || null,
+    text: (finalText || deltaText).trim(),
+    turns: assistantMessages.length || null,
     outputTokens: outputTokens || null,
     premiumRequests: Number(result?.usage?.premiumRequests || 0) || null,
     result,
@@ -146,14 +151,13 @@ export const copilotRunner = {
     timeoutMs = DEFAULT_TIMEOUT_MS,
   }) {
     // When --agent is used, Copilot loads the system prompt from .github/agents/<name>.md.
-    // We pipe only the user prompt via stdin in that case (to match the bash
-    // pattern). When --agent is not used we inline the system prompt with the
-    // XML wrappers.
+    // We pass only the user prompt as `-p <text>`. Without --agent we inline the
+    // system prompt wrapped in <system>/<user> tags as the user prompt.
     const prompt = runnerAgent ? userPrompt : buildPrompt(systemPrompt, userPrompt);
-    const args = buildCopilotArgs({ model, runnerAgent, securityPolicy });
+    const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
     const { events, stderr } = await new Promise((resolve, reject) => {
-      const child = spawn('copilot', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       const stdoutChunks = [];
       let stderrText = '';
       let timedOut = false;
@@ -163,12 +167,6 @@ export const copilotRunner = {
         child.kill('SIGTERM');
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
-
-      child.stdin.on('error', () => { /* surfaced via close handler */ });
-      try {
-        child.stdin.write(prompt);
-        child.stdin.end();
-      } catch { /* same */ }
 
       child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
       child.stderr.on('data', (d) => (stderrText += d.toString()));

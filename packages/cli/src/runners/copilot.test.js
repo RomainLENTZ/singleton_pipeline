@@ -69,12 +69,13 @@ describe('buildCopilotPermissionArgs', () => {
 describe('buildCopilotArgs', () => {
   it('builds a non-interactive Copilot command with permission args', () => {
     const args = buildCopilotArgs({
+      prompt: 'hello',
       model: 'gpt-4.1',
       runnerAgent: 'reviewer',
       securityPolicy: { profile: 'read-only' },
     });
 
-    expect(args.slice(0, 4)).toEqual(['-p', '-', '--output-format', 'json']);
+    expect(args.slice(0, 4)).toEqual(['-p', 'hello', '--output-format', 'json']);
     expect(args).toContain('--agent');
     expect(args).toContain('reviewer');
     expect(args).toContain('--model');
@@ -84,6 +85,7 @@ describe('buildCopilotArgs', () => {
 
   it('omits agent and model flags when not provided', () => {
     const args = buildCopilotArgs({
+      prompt: 'hello',
       securityPolicy: { profile: 'workspace-write' },
     });
     expect(args).not.toContain('--agent');
@@ -92,13 +94,13 @@ describe('buildCopilotArgs', () => {
 });
 
 describe('summarizeCopilotEvents', () => {
-  it('extracts assistant text from assistant.message events', () => {
+  it('keeps only the final assistant.message and drops intermediate narration', () => {
     const summary = summarizeCopilotEvents([
-      { type: 'assistant.message', data: { content: 'first answer', outputTokens: 12 } },
+      { type: 'assistant.message', data: { content: 'Looking at the files...', outputTokens: 12 } },
       { type: 'assistant.message', data: { content: 'second answer', outputTokens: 4 } },
     ]);
 
-    expect(summary.text).toBe('first answer\nsecond answer');
+    expect(summary.text).toBe('second answer');
     expect(summary.turns).toBe(2);
     expect(summary.outputTokens).toBe(16);
   });
