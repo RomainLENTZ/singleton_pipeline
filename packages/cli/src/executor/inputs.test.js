@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { buildUserMessage, collectInputValues, resolveInput } from './pipeline-inputs.js';
+import { buildUserMessage, collectInputValues, resolveInput } from './inputs.js';
 
 async function makeRoot() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'singleton-inputs-test-'));
