@@ -243,6 +243,7 @@ export async function runStepAttempt({
       timelineIndex,
       shell,
       cwd,
+      failStep,
     });
   }
 

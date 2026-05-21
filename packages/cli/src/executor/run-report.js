@@ -51,11 +51,12 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   const totalSeconds = stats.reduce((sum, s) => sum + (s.seconds || 0), 0);
   const totalCost = stats.reduce((sum, s) => sum + (s.cost || 0), 0);
 
-  // Compact 5-column table: #, agent, status (colored), time, cost.
-  // Provider/Model/Policy/Attempts/Turns are dropped — they're available in run-manifest.json.
+  // Compact 6-column table: #, agent, model, status (colored), time, cost.
+  // Provider/Policy/Attempts/Turns are dropped — they're available in run-manifest.json.
   const rows = stats.map((s, i) => ({
     step: String(i + 1),
     agent: s.agent,
+    model: s.model || '—',
     status: s.status,
     time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
     cost: formatCost(s.cost),
@@ -65,6 +66,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   const totalRow = {
     step: '',
     agent: 'TOTAL',
+    model: '—',
     status: finalStatus,
     time: formatSeconds(totalSeconds),
     cost: formatCost(totalCost),
@@ -74,6 +76,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   const widths = {
     step: Math.max(1, ...allRows.map((r) => visibleLength(r.step))),
     agent: Math.max(5, ...allRows.map((r) => visibleLength(r.agent))),
+    model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
     status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
     time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
     cost: Math.max(4, ...allRows.map((r) => visibleLength(r.cost))),
@@ -82,6 +85,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   const hr = [
     '─'.repeat(widths.step + 2),
     '─'.repeat(widths.agent + 2),
+    '─'.repeat(widths.model + 2),
     '─'.repeat(widths.status + 2),
     '─'.repeat(widths.time + 2),
     '─'.repeat(widths.cost + 2),
@@ -94,6 +98,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
     return [
       ` ${padVisible(r.step, widths.step, 'right')} `,
       ` ${padVisible(r.agent, widths.agent)} `,
+      ` ${padVisible(r.model, widths.model)} `,
       ` ${statusCell} `,
       ` ${padVisible(r.time, widths.time, 'right')} `,
       ` ${padVisible(r.cost, widths.cost, 'right')} `,
@@ -102,7 +107,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
 
   const lines = [
     ...sectionHeader('Run summary'),
-    `{${S.muted}-fg}${row({ step: '#', agent: 'Agent', status: 'Status', time: 'Time', cost: 'Cost' })}{/}`,
+    `{${S.muted}-fg}${row({ step: '#', agent: 'Agent', model: 'Model', status: 'Status', time: 'Time', cost: 'Cost' })}{/}`,
     `{${S.subtle}-fg}${hr}{/}`,
     ...rows.map((r) => row(r, { color: true })),
     `{${S.subtle}-fg}${hr}{/}`,
