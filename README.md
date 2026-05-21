@@ -17,18 +17,17 @@ You probably already chain Claude, Codex, Copilot, or OpenCode agents by hand: a
 
 ## Version 0.4.0 Beta
 
-This beta uniformizes the four runners around a single security model and adds the deterministic post-run validation layer.
+This beta hardens local execution and turns the CLI executor from one large script into smaller, testable runtime modules.
 
-- All four runners (Claude Code, Codex, Copilot, OpenCode) accept a `security_profile` parameter and translate it to their native CLI flags through a dedicated, unit-tested builder (`buildClaudePermissionArgs`, `buildCodexSandboxArgs`, `buildCopilotPermissionArgs`, `buildOpenCodePermissionConfig`).
-- Codex now honors the four profiles via `--sandbox` modes (`read-only`, `workspace-write`, `danger-full-access`) instead of a hardcoded `workspace-write`.
-- Claude now maps profiles to `--permission-mode` and `--disallowedTools` instead of relying on the legacy `permission_mode`; the legacy escape hatch is preserved.
-- Layer 3 (post-run snapshot diff) is now covered by a dedicated test suite that exercises out-of-bounds writes, blocked-path patterns, `../` traversal, and read-only enforcement without any LLM in the loop.
-- `assertWriteAllowed` is unit-tested as the atomic security predicate (11 cases) in `security/policy.test.js`.
-- Preflight now emits explicit info/warning messages for each provider × profile combination, calling out when Singleton relies on Layer 3 because a runner has no per-path filter.
-- Shared runner helpers (`safeJsonParse`, `extractText`, `findUsage`, `findCostUsd`) factored into `runners/_shared.js`; ~120 lines of duplicated parsing logic removed.
-- OpenCode auth fix: Singleton no longer redirects `XDG_DATA_HOME`, which used to strip provider credentials from the spawned process. Permission isolation now relies exclusively on `OPENCODE_CONFIG_CONTENT`.
-- A `Security model` section in this README describes the three layers and their per-runner coverage.
-- Test count grew from 52 to 96 across the uniformization work.
+- Fresh clones now include the Markdown agent fixtures used by the CLI test suite.
+- User-provided `$INPUT`, `$FILE`, and `$PIPE` content is XML-escaped before being embedded in prompts, so files cannot inject fake `<security_policy>`, `<workspace>`, or output tags.
+- Replay rollback is now explicit: debug review shows snapshot coverage, replay restores touched project files before editing inputs, and skipped files are reported loudly.
+- The executor has been split into focused modules under `packages/cli/src/executor/`: `inputs`, `outputs`, `snapshot-manager`, `preflight`, `debug-loop`, `step-runner`, `run-report`, `security-review`, `run-setup`, and `replay-loop`.
+- `executor.js` now orchestrates the run instead of owning every detail inline; the file dropped from roughly 2,600+ lines to about 660 lines.
+- Run reporting is cleaner: manifests and terminal summaries are generated from `run-report.js`, and the CLI summary keeps high-signal fields visible while the full details stay in `run-manifest.json`.
+- The terminal UI now uses semantic color tokens, framed run panels, step labels, mirrored pipeline logs, compact debug choices, and syntax-colored diffs.
+- Copilot/OpenCode/Claude/Codex still share the same `security_profile` model, with deterministic post-run validation as the final enforcement layer.
+- Test coverage is up to 110 tests across 12 files.
 
 ## Version 0.3.0 Beta
 
@@ -137,6 +136,10 @@ Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass valid
 
 Debug mode adds interactive checkpoints before and after each agent. It is designed for inspecting what the agent will receive, testing alternate specs, reviewing outputs, or replaying one step with adjusted inputs. Any edited input is temporary and does not mutate the pipeline JSON.
 
+Replay mode snapshots project files before the step and restores detected changes before rerunning. The CLI shows what was captured and warns when rollback is not fully guaranteed, for example when a touched file was too large or skipped by the snapshot filter.
+
+User-provided input is treated as untrusted prompt data. Singleton escapes XML-like characters inside `$INPUT`, `$FILE`, and `$PIPE` values before wrapping them in structural prompt blocks, so project files cannot smuggle fake workspace or security instructions into the prompt.
+
 Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
 
 ## Security model
@@ -156,7 +159,7 @@ Singleton enforces a `security_profile` (`read-only`, `restricted-write`, `works
 
 ⚠ Claude and Codex do not expose per-path write filters in their CLIs. For these runners, the agent *can* write anywhere it has permission to — Singleton's post-run snapshot diff is what fails the step when the write lands outside `allowed_paths`. Layer 3 covers both runners with a deterministic check that does not depend on the agent cooperating.
 
-Tests covering Layer 3: see [`packages/cli/src/security/policy.test.js`](packages/cli/src/security/policy.test.js) (`assertWriteAllowed` atomic predicate, including `../` traversal and blocked-path patterns) and [`packages/cli/src/executor.test.js`](packages/cli/src/executor.test.js) (`describe('Layer 3 — post-run snapshot diff …')` end-to-end without any LLM in the loop).
+Tests covering Layer 3: see [`packages/cli/src/security/policy.test.js`](packages/cli/src/security/policy.test.js) (`assertWriteAllowed` atomic predicate, including `../` traversal and blocked-path patterns), [`packages/cli/src/executor/snapshot-manager.test.js`](packages/cli/src/executor/snapshot-manager.test.js) (snapshot restore and skip coverage), and [`packages/cli/src/executor.test.js`](packages/cli/src/executor.test.js) (`describe('Layer 3 — post-run snapshot diff …')` end-to-end without any LLM in the loop).
 
 ## Examples
 

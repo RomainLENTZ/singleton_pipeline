@@ -219,12 +219,12 @@ async function showWelcome(root, shell) {
     `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`,
     `${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
     '',
-    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}you can now debug pipeline runs{/}`,
-    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}pause steps{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}inspect prompts{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}edit inputs{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}review diffs{/}`,
-    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}Copilot runner support{/}`,
-    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}provider copilot{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}runner_agent optional{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}native tool permissions{/}`,
-    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}experimental OpenCode runner support{/}`,
-    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}provider opencode{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}runner_agent optional{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}post-run security{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}safer debug replay{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}snapshot coverage{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}restore before replay{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}loud rollback limits{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}hardened prompt inputs{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}escaped file content{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}untrusted user XML{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}policy blocks protected{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}cleaner executor and terminal{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}modular runtime{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}framed run log{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}colored diffs{/}`,
     '',
   ];
   const TAGLINE  = 'one to rule them all';
