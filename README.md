@@ -20,12 +20,15 @@ You probably already chain Claude, Codex, Copilot, or OpenCode agents by hand: a
 This beta hardens local execution and turns the CLI executor from one large script into smaller, testable runtime modules.
 
 - Fresh clones now include the Markdown agent fixtures used by the CLI test suite.
+- `/new` now opens a sectioned in-shell agent form instead of a raw prompt chain, with field autocomplete, ghost defaults, `:back`, `:dir`, `:cancel`, review, and overwrite confirmation.
+- The REPL gained prompt-scoped completers and passive `/run <pipeline>` flag suggestions, so pipeline runs and agent creation stay inside the same terminal UI.
 - User-provided `$INPUT`, `$FILE`, and `$PIPE` content is XML-escaped before being embedded in prompts, so files cannot inject fake `<security_policy>`, `<workspace>`, or output tags.
 - Replay rollback is now explicit: debug review shows snapshot coverage, replay restores touched project files before editing inputs, and skipped files are reported loudly.
 - The executor has been split into focused modules under `packages/cli/src/executor/`: `inputs`, `outputs`, `snapshot-manager`, `preflight`, `debug-loop`, `step-runner`, `run-report`, `security-review`, `run-setup`, and `replay-loop`.
 - `executor.js` now orchestrates the run instead of owning every detail inline; the file dropped from roughly 2,600+ lines to about 660 lines.
-- Run reporting is cleaner: manifests and terminal summaries are generated from `run-report.js`, and the CLI summary keeps high-signal fields visible while the full details stay in `run-manifest.json`.
-- The terminal UI now uses semantic color tokens, framed run panels, step labels, mirrored pipeline logs, compact debug choices, and syntax-colored diffs.
+- Run reporting is cleaner: manifests and terminal summaries are generated from `run-report.js`, debug review labels include the active step, and the CLI summary keeps high-signal fields visible while the full details stay in `run-manifest.json`.
+- The terminal UI now uses semantic color tokens, framed run panels, step labels, mirrored pipeline logs, compact debug choices, syntax-colored diffs, and status-focused summary tables.
+- Copilot output handling is quieter and more deterministic: Singleton passes prompts through the CLI argument expected by Copilot and keeps the final assistant message instead of intermediate narration.
 - Copilot/OpenCode/Claude/Codex still share the same `security_profile` model, with deterministic post-run validation as the final enforcement layer.
 - Test coverage is up to 110 tests across 12 files.
 
@@ -115,6 +118,8 @@ Or just drop into the REPL:
 ```bash
 singleton
 ```
+
+Inside the REPL, `/new` creates a Singleton agent with a sectioned terminal form, autocomplete, inline defaults, and a final review step. `/run <pipeline>` autocompletes local pipelines first, then offers flags such as `--debug`, `--dry`, and `--verbose`.
 
 ## How it works
 

@@ -219,12 +219,12 @@ async function showWelcome(root, shell) {
     `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`,
     `${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
     '',
-    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}safer debug replay{/}`,
-    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}snapshot coverage{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}restore before replay{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}loud rollback limits{/}`,
-    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}hardened prompt inputs{/}`,
-    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}escaped file content{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}untrusted user XML{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}policy blocks protected{/}`,
-    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}cleaner executor and terminal{/}`,
-    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}modular runtime{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}framed run log{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}colored diffs{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}redesigned /new agent flow{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}sectioned form{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}field autocomplete{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}review + :back{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}safer replay and prompt inputs{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}snapshot restore{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}escaped user XML{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}loud rollback limits{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}cleaner run UI and output{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}framed logs{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}step reviews{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}final Copilot output{/}`,
     '',
   ];
   const TAGLINE  = 'one to rule them all';
