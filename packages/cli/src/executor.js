@@ -7,7 +7,7 @@ import { input } from '@inquirer/prompts';
 import { parseAgentFileDetailed } from './parser.js';
 import { style, line } from './theme.js';
 import { createTimeline } from './timeline.js';
-import { C } from './shell.js';
+import { S } from './shell.js';
 import { getRunner } from './runners/index.js';
 import { discoverCodexProjectInstructions } from './runners/codex-instructions.js';
 import {
@@ -523,6 +523,8 @@ function createSilentTimeline() {
   return {
     log() {},
     logMuted() {},
+    logSuccess() {},
+    logError() {},
     setRunning() {},
     setPaused() {},
     setDone() {},
@@ -546,52 +548,63 @@ function previewValue(value, max = 140) {
   return `${compact.slice(0, max - 1)}…`;
 }
 
+// Semantic tokens for debug field formatting.
+//   key       — labels ("inputs:", "system prompt:")
+//   identity  — positive resolved values ("found", chars/lines counts)
+//   text      — neutral readable values
+//   path      — file paths and URIs
+//   policy    — attention values ("missing", security notes)
+//   muted     — fallback or secondary info
 const debugToken = {
-  key: (value) => `{${C.violet}-fg}{bold}${value}:{/}`,
-  identity: (value) => `{${C.mint}-fg}${value || '—'}{/}`,
-  text: (value) => `{#FFFFFF-fg}${value || '—'}{/}`,
-  path: (value) => `{${C.blue}-fg}${value || '—'}{/}`,
-  policy: (value) => `{${C.peach}-fg}${value || '—'}{/}`,
-  muted: (value) => `{${C.ghost}-fg}${value || '—'}{/}`,
+  key: (value) => `{${S.accent}-fg}{bold}${value}:{/}`,
+  identity: (value) => `{${S.success}-fg}${value || '—'}{/}`,
+  text: (value) => `{${S.text}-fg}${value || '—'}{/}`,
+  path: (value) => `{${S.string}-fg}${value || '—'}{/}`,
+  policy: (value) => `{${S.warning}-fg}${value || '—'}{/}`,
+  muted: (value) => `{${S.muted}-fg}${value || '—'}{/}`,
 };
 
+// Action semantics for debug toolbars:
+//   continue → success | inspect/output → keyword (observe)
+//   edit/diff → warning (modifies)  | skip/replay → accent (neutral action)
+//   abort → error
 const DEBUG_ACTION_PROMPT = [
-  `{#FFFFFF-fg}{bold}Debug action{/}`,
-  `{${C.mint}-fg}▶ continue{/}{${C.ghost}-fg}(c){/}`,
-  `{${C.blue}-fg}? inspect{/}{${C.ghost}-fg}(i){/}`,
-  `{${C.peach}-fg}✎ edit{/}{${C.ghost}-fg}(e){/}`,
-  `{${C.violet}-fg}→ skip{/}{${C.ghost}-fg}(s){/}`,
-  `{${C.salmon}-fg}■ abort{/}{${C.ghost}-fg}(a){/}`,
-].join(` {${C.ghost}-fg}·{/} `);
+  `{${S.text}-fg}{bold}Debug action{/}`,
+  `{${S.success}-fg}▶ continue{/}{${S.subtle}-fg}(c){/}`,
+  `{${S.keyword}-fg}? inspect{/}{${S.subtle}-fg}(i){/}`,
+  `{${S.warning}-fg}✎ edit{/}{${S.subtle}-fg}(e){/}`,
+  `{${S.accent}-fg}→ skip{/}{${S.subtle}-fg}(s){/}`,
+  `{${S.error}-fg}■ abort{/}{${S.subtle}-fg}(a){/}`,
+].join(` {${S.subtle}-fg}·{/} `);
 
 const DEBUG_ACTION_HELP = [
-  `{#FFFFFF-fg}Choose{/}`,
-  `{${C.mint}-fg}▶ continue{/}`,
-  `{${C.blue}-fg}? inspect{/}`,
-  `{${C.peach}-fg}✎ edit{/}`,
-  `{${C.violet}-fg}→ skip{/}`,
-  `{${C.salmon}-fg}■ abort{/}`,
-].join(` {${C.ghost}-fg}·{/} `);
+  `{${S.text}-fg}Choose{/}`,
+  `{${S.success}-fg}▶ continue{/}`,
+  `{${S.keyword}-fg}? inspect{/}`,
+  `{${S.warning}-fg}✎ edit{/}`,
+  `{${S.accent}-fg}→ skip{/}`,
+  `{${S.error}-fg}■ abort{/}`,
+].join(` {${S.subtle}-fg}·{/} `);
 
 const DEBUG_POST_ACTION_PROMPT = [
-  `{#FFFFFF-fg}{bold}Debug output{/}`,
-  `{${C.mint}-fg}▶ continue{/}{${C.ghost}-fg}(c){/}`,
-  `{${C.blue}-fg}? output{/}{${C.ghost}-fg}(o){/}`,
-  `{${C.violet}-fg}raw output{/}{${C.ghost}-fg}(r){/}`,
-  `{${C.peach}-fg}± diff{/}{${C.ghost}-fg}(d){/}`,
-  `{${C.violet}-fg}↻ replay{/}{${C.ghost}-fg}(p){/}`,
-  `{${C.salmon}-fg}■ abort{/}{${C.ghost}-fg}(a){/}`,
-].join(` {${C.ghost}-fg}·{/} `);
+  `{${S.text}-fg}{bold}Debug output{/}`,
+  `{${S.success}-fg}▶ continue{/}{${S.subtle}-fg}(c){/}`,
+  `{${S.keyword}-fg}? output{/}{${S.subtle}-fg}(o){/}`,
+  `{${S.keyword}-fg}raw output{/}{${S.subtle}-fg}(r){/}`,
+  `{${S.warning}-fg}± diff{/}{${S.subtle}-fg}(d){/}`,
+  `{${S.accent}-fg}↻ replay{/}{${S.subtle}-fg}(p){/}`,
+  `{${S.error}-fg}■ abort{/}{${S.subtle}-fg}(a){/}`,
+].join(` {${S.subtle}-fg}·{/} `);
 
 const DEBUG_POST_ACTION_HELP = [
-  `{#FFFFFF-fg}Choose{/}`,
-  `{${C.mint}-fg}▶ continue{/}`,
-  `{${C.blue}-fg}? output{/}`,
-  `{${C.violet}-fg}raw output{/}`,
-  `{${C.peach}-fg}± diff{/}`,
-  `{${C.violet}-fg}↻ replay{/}`,
-  `{${C.salmon}-fg}■ abort{/}`,
-].join(` {${C.ghost}-fg}·{/} `);
+  `{${S.text}-fg}Choose{/}`,
+  `{${S.success}-fg}▶ continue{/}`,
+  `{${S.keyword}-fg}? output{/}`,
+  `{${S.keyword}-fg}raw output{/}`,
+  `{${S.warning}-fg}± diff{/}`,
+  `{${S.accent}-fg}↻ replay{/}`,
+  `{${S.error}-fg}■ abort{/}`,
+].join(` {${S.subtle}-fg}·{/} `);
 
 const DEFAULT_MAX_DEBUG_REPLAYS = 3;
 
@@ -602,7 +615,7 @@ function logDebugSection(title, timeline) {
   const right = Math.max(0, width - text.length - left);
   timeline.logMuted(' ');
   timeline.logMuted(' ');
-  timeline.log(`{${C.ghost}-fg}${'─'.repeat(left)}{/}{${C.violet}-fg}{bold}${text}{/}{${C.ghost}-fg}${'─'.repeat(right)}{/}`);
+  timeline.log(`{${S.subtle}-fg}${'─'.repeat(left)}{/}{${S.accent}-fg}{bold}${text}{/}{${S.subtle}-fg}${'─'.repeat(right)}{/}`);
   timeline.logMuted(' ');
   timeline.logMuted(' ');
 }
@@ -677,11 +690,13 @@ function debugPromptTextLine(line, { editedInputs = new Set() } = {}) {
     tagPattern.lastIndex = 0;
     if (isTag) {
       const isVariableTag = /^<\/?(workspace|security_policy|file)\b/i.test(part) === false;
-      const color = isVariableTag ? C.peach : C.blue;
+      // Variable tags = interpolated user data (warning-toned, watch what gets in).
+      // System tags = structural (workspace, security_policy, file) keyword-toned.
+      const color = isVariableTag ? S.warning : S.keyword;
       tagPattern.lastIndex = 0;
       return `{${color}-fg}{bold}${part}{/}`;
     }
-    return `{#FFFFFF-fg}${part}{/}`;
+    return `{${S.text}-fg}${part}{/}`;
   }).join('');
 }
 
@@ -1042,7 +1057,7 @@ async function promptDebugStepDecision({
       logDebugInputs(currentInputs, timeline);
       if (editedInputs.size) {
         const inspectAnswer = shell
-          ? await shell.prompt(`{#FFFFFF-fg}Inspect final prompt now?{/} {${C.mint}-fg}yes{/}{${C.ghost}-fg}(y){/} {${C.ghost}-fg}or{/} {${C.ghost}-fg}no(n){/}`)
+          ? await shell.prompt(`{${S.text}-fg}Inspect final prompt now?{/} {${S.success}-fg}yes{/}{${S.subtle}-fg}(y){/} {${S.subtle}-fg}or{/} {${S.subtle}-fg}no(n){/}`)
           : await input({ message: 'Inspect final prompt now? (y/N)', default: 'n' });
         if (isPromptCancelled(inspectAnswer)) {
           timeline.logMuted(`${debugToken.muted('Inspect prompt cancelled.')}`);
@@ -1478,14 +1493,14 @@ function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = 
   ];
 
   if (runDir) {
-    lines.push(`Run: {${C.dimV}-fg}${path.relative(cwd, runDir)}{/}`);
+    lines.push(`Run: {${S.string}-fg}${path.relative(cwd, runDir)}{/}`);
   }
 
   if (fileWrites.length) {
     lines.push('', '{bold}Generated{/}');
-    for (const f of fileWrites) lines.push(`  {${C.dimV}-fg}·{/} ${f}`);
+    for (const f of fileWrites) lines.push(`  {${S.subtle}-fg}·{/} {${S.string}-fg}${f}{/}`);
   } else {
-    lines.push('', `{${C.dimV}-fg}No files generated.{/}`);
+    lines.push('', `{${S.muted}-fg}No files generated.{/}`);
   }
 
   return lines;
@@ -1776,7 +1791,7 @@ async function handlePostRunViolations({ violations, step, securityPolicy, timel
       continue;
     }
     if (answer === 'c' || answer === 'continue' || answer === 'y' || answer === 'yes') {
-      timeline.log(`{${C.peach}-fg}!{/} Continued after security violation for ${step.agent}.`);
+      timeline.log(`{${S.warning}-fg}!{/} Continued after security violation for ${step.agent}.`);
       return;
     }
     if (!answer || answer === 's' || answer === 'stop' || answer === 'n' || answer === 'no') {
@@ -1880,17 +1895,27 @@ export async function runPipeline(filePath, opts = {}) {
     if (dryRun) console.log(style.warn('  [dry-run] no CLI calls will be made'));
     if (debug) console.log(style.warn('  [debug] pausing before each step'));
   } else if (shell) {
-    shell.log(`{bold}▸ ${pipeline.name}{/}  {${C.dimV}-fg}(${pipeline.steps.length} steps){/}`);
-    if (runInfo) shell.log(`  {${C.dimV}-fg}${runInfo}{/}`);
+    shell.log(`{bold}▸ ${pipeline.name}{/}  {${S.muted}-fg}(${pipeline.steps.length} steps){/}`);
+    if (runInfo) shell.log(`  {${S.muted}-fg}${runInfo}{/}`);
     if (dryRun) shell.log(`{yellow-fg}  [dry-run] no CLI calls will be made{/}`);
     if (debug) shell.log(`{yellow-fg}  [debug] pausing before each step{/}`);
+    shell.setMode?.(debug ? 'debug' : 'running');
   }
 
   const inputDefs = (pipeline.nodes || [])
     .filter((n) => n.type === 'input')
     .map((n) => ({ id: n.id, subtype: n.data?.subtype || 'text', label: n.data?.label || n.id, value: n.data?.value || '' }));
 
-  const promptFn = shell ? (msg) => shell.prompt(msg) : null;
+  const runBorderMode = debug ? 'debug' : 'running';
+  const promptFn = shell ? async (msg) => {
+    shell.setMode?.('awaiting');
+    shell.setPipelineLabel?.('input waiting');
+    try { return await shell.prompt(msg); }
+    finally {
+      shell.setMode?.(runBorderMode);
+      shell.clearPipelineLabel?.();
+    }
+  } : null;
   const inputValues = await collectInputValues(pipeline, dryRun, promptFn);
 
   if (shell) shell.enterPipelineMode();
@@ -1953,7 +1978,7 @@ export async function runPipeline(filePath, opts = {}) {
     }
 
     timeline.setDone(0, `${preflightSeconds.toFixed(1)}s · ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
-    timeline.log(`✓ preflight checks — ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
+    timeline.logSuccess(`✓ preflight checks — ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
     stats.push({
       agent: 'preflight checks',
       provider: 'system',
@@ -2572,7 +2597,7 @@ export async function runPipeline(filePath, opts = {}) {
       const turnInfo = totalAttemptTurns ? ` · ${totalAttemptTurns}t` : '';
       const attemptInfo = attempt > 1 ? ` · ${attempt} attempts` : '';
       timeline.setDone(timelineIndex, `${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
-      timeline.log(`✓ ${step.agent} — ${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
+      timeline.logSuccess(`✓ ${step.agent} — ${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
       stats.push({
         agent: step.agent,
         provider,
@@ -2645,8 +2670,10 @@ export async function runPipeline(filePath, opts = {}) {
     runStatus,
   })) out(line);
   if (runError) {
-    out(`{${C.salmon}-fg}✕ pipeline failed{/}`);
+    shell?.setMode?.('error');
+    out(`{${S.error}-fg}✕ pipeline failed{/}`);
     throw runError;
   }
-  out(dryRun ? `{${C.mint}-fg}✓ dry-run complete{/}` : `{${C.mint}-fg}✓ pipeline complete{/}`);
+  shell?.setMode?.(null);
+  out(dryRun ? `{${S.success}-fg}✓ dry-run complete{/}` : `{${S.success}-fg}✓ pipeline complete{/}`);
 }
