@@ -175,6 +175,9 @@ export function createShell() {
   let footerLeft = '';
   let footerRight = '';
   let footerCenter = '';
+  // Tracks the /run two-step submit: first Enter on `/run <pipeline>` opens flag suggestions
+  // passively, second Enter submits. Cleared by any keystroke that breaks the dance.
+  let runAwaitingSecondEnter = false;
   function stripTags(s) {
     return String(s || '').replace(/\{[^}]+\}/g, '');
   }
@@ -186,7 +189,7 @@ export function createShell() {
   }
 
   function renderSuggestions() {
-    if (!suggestions.length || promptMode) {
+    if (!suggestions.length) {
       suggestBox.hide();
       return;
     }
@@ -197,13 +200,18 @@ export function createShell() {
       Math.max(0, suggestions.length - maxItems)
     );
     const width = Math.max(40, (screen.width ?? 100) - 6);
+    // Semantic styling:
+    //   active row   → accent ›, white bold label, muted description (clearly the one in focus)
+    //   inactive row → blank marker, muted label, subtle description (recedes)
+    // suggestIndex === -1 means "no active selection" (passive listing after a soft Enter on /run).
     const lines = suggestions.slice(start, start + maxItems).map((item, idx) => {
-      const active = start + idx === suggestIndex;
-      const marker = active ? `{${C.violet}-fg}›{/}` : `{${C.ghost}-fg} {/}`;
+      const active = suggestIndex >= 0 && start + idx === suggestIndex;
+      const marker = active ? `{${S.accent}-fg}{bold}›{/}` : ' ';
       const label = active
-        ? `{${C.pink}-fg}${item.label}{/}`
-        : `{${C.dimV}-fg}${item.label}{/}`;
-      const desc = item.description ? ` {${C.ghost}-fg}${item.description}{/}` : '';
+        ? `{${S.text}-fg}{bold}${item.label}{/}`
+        : `{${S.muted}-fg}${item.label}{/}`;
+      const descColor = active ? S.muted : S.subtle;
+      const desc = item.description ? ` {${descColor}-fg}${item.description}{/}` : '';
       const visible = stripTags(`${marker} ${item.label}${item.description ? ` ${item.description}` : ''}`);
       const clippedDesc = visible.length > width ? '' : desc;
       return `${marker} ${label}${clippedDesc}`;
@@ -213,17 +221,21 @@ export function createShell() {
     suggestBox.show();
   }
 
-  async function refreshSuggestions({ applySingle = false } = {}) {
-    if (!completer || promptMode) return false;
+  async function refreshSuggestions({ applySingle = false, passive = false } = {}) {
+    // Prompt-scoped completer (set via shell.prompt({ completer })) takes precedence,
+    // so per-field autocompletes don't leak into the global slash-command completer.
+    const activeCompleter = promptMode?.completer || completer;
+    if (!activeCompleter) return false;
 
     const seq = ++completeSeq;
-    const result = await completer({ buffer, cursor: buffer.length });
+    const result = await activeCompleter({ buffer, cursor: buffer.length });
     if (seq !== completeSeq) return false;
 
     suggestions = Array.isArray(result)
       ? result.filter((s) => s && typeof s.value === 'string' && typeof s.label === 'string')
       : [];
-    suggestIndex = 0;
+    // passive=true: shown as a list with no active row; Enter will submit, not apply.
+    suggestIndex = passive ? -1 : 0;
 
     if (applySingle && suggestions.length === 1) {
       applySuggestion(suggestions[0]);
@@ -239,6 +251,7 @@ export function createShell() {
     if (!item) return false;
     buffer = item.value;
     hideSuggestions();
+    runAwaitingSecondEnter = false;
     updatePrompt();
     return true;
   }
@@ -254,8 +267,14 @@ export function createShell() {
       const marker = message.includes('Debug action')
         ? ''
         : `{${S.warning}-fg}{bold}?{/}  `;
+      // Ghost-text default: when the buffer is empty and the caller supplied a
+      // `default` value, render it in subtle after the cursor so it reads as a
+      // suggestion. Pressing Enter on an empty buffer accepts the default.
+      const ghost = (!buffer && promptMode.default)
+        ? `{${S.subtle}-fg}${promptMode.default}{/}`
+        : '';
       promptBox.setContent(
-        `${marker}${renderedMessage}  {${S.muted}-fg}›{/}  ${buffer}{${S.accent}-fg}▌{/}`
+        `${marker}${renderedMessage}  {${S.muted}-fg}›{/}  ${buffer}{${S.accent}-fg}▌{/}${ghost}`
       );
     } else {
       if (buffer) {
@@ -379,6 +398,13 @@ export function createShell() {
     if (!inputEnabled && !promptMode) return;
 
     if (promptMode && key.name === 'escape') {
+      // In a prompt with autocomplete open, Esc first closes the suggestions instead
+      // of cancelling the prompt itself (matches the global-mode behavior).
+      if (suggestions.length) {
+        hideSuggestions();
+        updatePrompt();
+        return;
+      }
       const { resolve, message, silent } = promptMode;
       promptMode = null;
       buffer = '';
@@ -388,9 +414,10 @@ export function createShell() {
       return;
     }
 
-    if (!promptMode && key.name === 'tab') {
+    if (key.name === 'tab' && (promptMode?.completer || (!promptMode && completer))) {
       if (suggestions.length > 1) {
-        suggestIndex = (suggestIndex + 1) % suggestions.length;
+        // From the passive -1 state, Tab focuses the first item rather than skipping it.
+        suggestIndex = suggestIndex < 0 ? 0 : (suggestIndex + 1) % suggestions.length;
         renderSuggestions();
         screen.render();
         return;
@@ -399,9 +426,11 @@ export function createShell() {
       return;
     }
 
-    if (!promptMode && suggestions.length && (key.name === 'down' || key.name === 'up')) {
+    if (suggestions.length && (key.name === 'down' || key.name === 'up')) {
       const dir = key.name === 'down' ? 1 : -1;
-      suggestIndex = (suggestIndex + dir + suggestions.length) % suggestions.length;
+      // From the passive -1 state, the first arrow lands on item 0 (down) or last (up).
+      if (suggestIndex < 0) suggestIndex = dir === 1 ? 0 : suggestions.length - 1;
+      else suggestIndex = (suggestIndex + dir + suggestions.length) % suggestions.length;
       renderSuggestions();
       screen.render();
       return;
@@ -413,9 +442,14 @@ export function createShell() {
       return;
     }
 
-    if (!promptMode && suggestions.length && (key.name === 'right' || key.name === 'enter' || key.name === 'return')) {
-      applySuggestion();
-      return;
+    if (suggestions.length && (key.name === 'right' || key.name === 'enter' || key.name === 'return')) {
+      // Passive listing (no active row) → Enter falls through to the submit handler below.
+      if (suggestIndex < 0 && (key.name === 'enter' || key.name === 'return')) {
+        // fall through
+      } else {
+        applySuggestion();
+        return;
+      }
     }
 
     if (!promptMode && !suggestions.length && (key.full === 'C-p' || key.full === 'C-n')) {
@@ -446,14 +480,34 @@ export function createShell() {
 
     if (key.name === 'enter' || key.name === 'return') {
       const value = buffer.trim();
+
+      // Two-step submit for /run <pipeline>: first Enter opens flag suggestions passively,
+      // second Enter submits. Guarded by runAwaitingSecondEnter so dismissing the suggestions
+      // (Esc) and pressing Enter again doesn't re-loop.
+      if (
+        !promptMode &&
+        !runAwaitingSecondEnter &&
+        /^\/run\s+\S+\s*$/.test(value) &&
+        !value.includes(' --')
+      ) {
+        if (!buffer.endsWith(' ')) buffer += ' ';
+        runAwaitingSecondEnter = true;
+        updatePrompt();
+        await refreshSuggestions({ passive: true });
+        return;
+      }
+      runAwaitingSecondEnter = false;
+
       buffer = '';
       hideSuggestions();
       if (promptMode) {
-        const { resolve, message, silent } = promptMode;
+        const { resolve, message, silent, default: promptDefault } = promptMode;
+        // Empty submission with a ghost-text default → resolve with the default.
+        const finalValue = (value === '' && promptDefault) ? promptDefault : value;
         promptMode = null;
-        if (!silent) log(`{${S.warning}-fg}{bold}?{/}  {${S.muted}-fg}${message}{/}  ${value}`);
+        if (!silent) log(`{${S.warning}-fg}{bold}?{/}  {${S.muted}-fg}${message}{/}  ${finalValue}`);
         updatePrompt();
-        resolve(value);
+        resolve(finalValue);
       } else {
         updatePrompt();
         if (value) {
@@ -467,14 +521,28 @@ export function createShell() {
       }
     } else if (key.name === 'backspace') {
       buffer = buffer.slice(0, -1);
-      hideSuggestions();
       resetHistoryNav();
-      updatePrompt();
+      runAwaitingSecondEnter = false;
+      // In a prompt with a completer, keystrokes re-filter the suggestions instead
+      // of dismissing them. In all other modes, typing hides the suggest panel.
+      if (promptMode?.completer) {
+        updatePrompt();
+        await refreshSuggestions({ passive: true });
+      } else {
+        hideSuggestions();
+        updatePrompt();
+      }
     } else if (ch && !key.ctrl && !key.meta) {
       buffer += ch;
-      hideSuggestions();
       resetHistoryNav();
-      updatePrompt();
+      runAwaitingSecondEnter = false;
+      if (promptMode?.completer) {
+        updatePrompt();
+        await refreshSuggestions({ passive: true });
+      } else {
+        hideSuggestions();
+        updatePrompt();
+      }
     }
   });
 
@@ -553,6 +621,7 @@ export function createShell() {
     clearPipelineLabel,
 
     clear() { content.setContent(''); screen.render(); },
+    setContent(text) { content.setContent(text); screen.render(); },
     onCommand(fn)  { onSubmit = fn; },
     setCompleter(fn) { completer = fn; },
 
@@ -590,7 +659,7 @@ export function createShell() {
     disableInput() { inputEnabled = false; hideSuggestions(); resetHistoryNav(); screen.render(); },
     enableInput()  { inputEnabled = true; buffer = ''; hideSuggestions(); resetHistoryNav(); updatePrompt(); },
 
-    prompt(message, { silent = false } = {}) {
+    prompt(message, { silent = false, completer: promptCompleter = null, default: promptDefault = '' } = {}) {
       return new Promise((resolve) => {
         // Override ambient mode to 'awaiting' (orange) for the duration of the prompt,
         // and restore the baseMode (e.g. 'running') once the user has answered.
@@ -599,6 +668,8 @@ export function createShell() {
         promptMode = {
           message,
           silent,
+          completer: promptCompleter,
+          default: promptDefault,
           resolve: (value) => {
             if (shouldOverride) applyMode(baseMode);
             resolve(value);
@@ -608,6 +679,13 @@ export function createShell() {
         hideSuggestions();
         resetHistoryNav();
         updatePrompt();
+        // With a prompt-scoped completer, show the full suggestion list immediately
+        // so the user sees what's available without having to press Tab first.
+        // Use passive mode so Enter submits the typed value rather than applying
+        // the first row — Tab/arrows are the explicit "pick" path.
+        if (promptCompleter) {
+          refreshSuggestions({ passive: true }).catch(() => {});
+        }
       });
     },
 
