@@ -1,220 +1,253 @@
-# Singleton Pipeline Builder (v0.4.0-beta.12)
+# Singleton Pipeline Builder
 
 [![npm version](https://img.shields.io/npm/v/singleton-pipeline/beta.svg)](https://www.npmjs.com/package/singleton-pipeline)
 [![npm downloads](https://img.shields.io/npm/dm/singleton-pipeline.svg)](https://www.npmjs.com/package/singleton-pipeline)
 [![license](https://img.shields.io/npm/l/singleton-pipeline.svg)](LICENSE)
 
-Build multi-agent pipelines for your codebase, visually.
+Build and run multi-agent pipelines for your codebase.
 
-You probably already chain Claude, Codex, Copilot, or OpenCode agents by hand: a scout reads the repo, a generator writes code, a reviewer checks it. Singleton turns that workflow into a reusable pipeline you can edit in a graph, run in one command, and commit cleanly.
+Singleton turns the workflow you already do by hand with Claude, Codex, Copilot, or OpenCode into a reusable project-local pipeline: one agent scouts, another writes, another reviews, and the run leaves behind a manifest of what changed.
 
 - agents are plain Markdown files
-- pipelines are JSON, stored in your project under `.singleton/`
-- runs are versioned, with a manifest of what was actually written
-- nothing leaves your machine Singleton drives local provider CLIs (`claude`, `codex`, `copilot`, `opencode`)
+- pipelines are JSON files under `.singleton/pipelines`
+- runs are stored under `.singleton/runs`
+- execution is local orchestration over provider CLIs in your `$PATH`
+- write policy is enforced by Singleton before and after each step
 
 > Status: beta. Singleton is usable locally, but the pipeline format, provider adapters, and builder UX may still evolve.
 
-## Version 0.4.0 Beta
-
-This beta hardens local execution and turns the CLI executor from one large script into smaller, testable runtime modules.
-
-- Fresh clones now include the Markdown agent fixtures used by the CLI test suite.
-- `/new` now opens a sectioned in-shell agent form instead of a raw prompt chain, with field autocomplete, ghost defaults, `:back`, `:dir`, `:cancel`, review, and overwrite confirmation.
-- The REPL gained prompt-scoped completers and passive `/run <pipeline>` flag suggestions, so pipeline runs and agent creation stay inside the same terminal UI.
-- User-provided `$INPUT`, `$FILE`, and `$PIPE` content is XML-escaped before being embedded in prompts, so files cannot inject fake `<security_policy>`, `<workspace>`, or output tags.
-- Replay rollback is now explicit: debug review shows snapshot coverage, replay restores touched project files before editing inputs, and skipped files are reported loudly.
-- The executor has been split into focused modules under `packages/cli/src/executor/`: `inputs`, `outputs`, `snapshot-manager`, `preflight`, `debug-loop`, `step-runner`, `run-report`, `security-review`, `run-setup`, and `replay-loop`.
-- `executor.js` now orchestrates the run instead of owning every detail inline; the file dropped from roughly 2,600+ lines to about 660 lines.
-- Run reporting is cleaner: manifests and terminal summaries are generated from `run-report.js`, debug review labels include the active step, and the CLI summary keeps high-signal fields visible while the full details stay in `run-manifest.json`.
-- The terminal UI now uses semantic color tokens, framed run panels, step labels, mirrored pipeline logs, compact debug choices, syntax-colored diffs, and status-focused summary tables.
-- Copilot output handling is quieter and more deterministic: Singleton passes prompts through the CLI argument expected by Copilot and keeps the final assistant message instead of intermediate narration.
-- Copilot/OpenCode/Claude/Codex still share the same `security_profile` model, with deterministic post-run validation as the final enforcement layer.
-- Test coverage is up to 110 tests across 12 files.
-
-## Version 0.3.0 Beta
-
-This beta focused on multi-provider execution, Copilot support, inspection, and safer local runs.
-
-- Claude, Codex, Copilot, and experimental OpenCode can now run from the same pipeline model.
-- Copilot support uses the local `copilot` CLI with optional `runner_agent`.
-- Copilot tool permissions are generated from Singleton security profiles using `--allow-tool` and `--deny-tool`.
-- Repo-level Copilot profiles in `.github/agents/*.agent.md` are optional; user-level and organization-level agents can also be used.
-- OpenCode support uses the local `opencode` CLI with optional `runner_agent`; Singleton maps security profiles to OpenCode native permissions through runtime config.
-- `Policy` is now visible during runs and in the final recap.
-- Agents can run as `read-only`, `workspace-write`, `restricted-write`, or `dangerous`.
-- Pipelines can restrict writers to exact files or folders with `allowed_paths`.
-- `.singleton/security.json` defines project-wide defaults, blocked paths, and commit exclusions.
-- Singleton validates writes before execution, at write-time, and after each step by checking real project changes.
-- Security violations pause the REPL with `continue`, `stop`, and `diff` options.
-- `--debug` pauses before each step with `continue`, `inspect`, `edit`, `skip`, and `abort`.
-- Debug also pauses after each step to inspect parsed outputs, written files, detected changes, and diffs before continuing.
-- Debug inspect shows the full prompt that will be sent to the provider.
-- Debug edit lets you override resolved step inputs for the current run only.
-- Debug replay can rerun a step with adjusted inputs; project file changes from the previous attempt are restored first.
-- Debug replay stores repeated step artifacts under `attempt-1`, `attempt-2`, etc.; steps without replay keep artifacts at the step root.
-- Debug replay is capped per step and only restores detected project file changes, not external side effects.
-- Edited inputs are marked in prompt preview with `debug-edited="true"` to make prompt priority easier to inspect.
-- Debug decisions are recorded in `run-manifest.json` as lightweight `debugEvents`.
-- Debug runs are stored with a `DEBUG-` prefix in `.singleton/runs/`.
-- Raw provider output can be inspected during debug and is saved as `raw-output.md` when structured output parsing fails or debug detects output warnings.
-- Run manifests are written even when a pipeline fails, so partial runs remain inspectable.
-- `/commit-last` previews files, applies security exclusions, and asks for confirmation.
-
 ## Install
 
-The fastest path is via npm:
+Requirements: Node 20+ and at least one authenticated provider CLI in your `$PATH`: `claude`, `codex`, `copilot`, or `opencode`.
 
 ```bash
 npm install -g singleton-pipeline@beta
 singleton --version
 ```
 
-Or run it directly without installing globally:
+Or run without a global install:
 
 ```bash
 npx singleton-pipeline@beta --help
 ```
 
-Singleton drives the provider CLIs you already use; install the ones you want in your `$PATH` with a working session: `claude`, `codex`, `copilot`, `opencode`.
-
-Requirements: Node 20+.
-
-### From source (development)
+For development from source:
 
 ```bash
 git clone https://github.com/RomainLENTZ/singleton_pipeline.git
 cd singleton_pipeline
 npm install
-npm link        # optional, to use `singleton` globally
+npm link
 ```
 
 ## Quickstart
 
-Run the bundled mixed-provider example end-to-end (uses Claude for scouting/review and Codex for implementation):
-
-```bash
-singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json
-```
-
-Add `--dry-run` to validate the pipeline without calling any LLM.
-
-Use `--debug` to pause before each step, inspect the prompt, and adjust inputs for the current run:
-
-```bash
-singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json --debug
-```
-
-Open the visual builder on your own project:
-
-```bash
-singleton serve --root /path/to/your/project
-cd packages/web && npm run dev
-# → http://localhost:5173
-```
-
-Or just drop into the REPL:
-
-```bash
-singleton
-```
-
-Inside the REPL, `/new` creates a Singleton agent with a sectioned terminal form, autocomplete, inline defaults, and a final review step. `/run <pipeline>` autocompletes local pipelines first, then offers flags such as `--debug`, `--dry`, and `--verbose`.
-
-## How it works
-
-A pipeline is a graph of two node types:
-
-- **Input** : a value or file path you provide at runtime
-- **Agent** : a Markdown file (`## Config` + prompt) that gets executed
-
-Steps wire to each other through four references:
-
-| Reference              | Direction | Use for                                       |
-| ---------------------- | --------- | --------------------------------------------- |
-| `$INPUT:<id>`          | in        | a value supplied at run time                  |
-| `$FILE:<path>`         | in / out  | read or write a single file                   |
-| `$PIPE:<agent>.<out>`  | in        | grab the output of a previous step            |
-| `$FILES:<dir>`         | out       | let an agent emit several files at once       |
-
-Execution is sequential, ordered by `$PIPE` dependencies. A preflight pass validates inputs, files, providers, references, and security policies before any LLM is called. Each run lands in `.singleton/runs/<id>/` with a manifest, even when the run fails; `/commit-last` stages only approved project deliverables (never `.singleton` itself).
-
-Debug mode adds interactive checkpoints before and after each agent. It is designed for inspecting what the agent will receive, testing alternate specs, reviewing outputs, or replaying one step with adjusted inputs. Any edited input is temporary and does not mutate the pipeline JSON.
-
-Replay mode snapshots project files before the step and restores detected changes before rerunning. The CLI shows what was captured and warns when rollback is not fully guaranteed, for example when a touched file was too large or skipped by the snapshot filter.
-
-User-provided input is treated as untrusted prompt data. Singleton escapes XML-like characters inside `$INPUT`, `$FILE`, and `$PIPE` values before wrapping them in structural prompt blocks, so project files cannot smuggle fake workspace or security instructions into the prompt.
-
-Full details, agent fields, provider resolution, preflight rules, CLI flags, `$FILES` format, run manifest schema live in **[docs/reference.md](docs/reference.md)**.
-
-## Security model
-
-Singleton enforces a `security_profile` (`read-only`, `restricted-write`, `workspace-write`, `dangerous`) at three layers, in order of trust:
-
-1. **Prompt-level policy** — Singleton injects a `<security_policy>` block in the user message describing `allowed_paths`/`blocked_paths`. Cooperative models honor it on their own. *Not load-bearing*: a jailbreak can bypass it.
-2. **Runner-native permissions** — Singleton translates the profile into each CLI's native flags before spawning. Best-effort, varies by runner (see matrix below).
-3. **Post-run snapshot diff** — Singleton snapshots the project filesystem before each step and diffs it after. Any change outside `allowed_paths` (or matching `blocked_paths`) fails the step, regardless of what the agent did. *This is the deterministic guarantee* — it does not depend on the LLM, the runner, or the prompt.
-
-| Profile | Claude Code | Codex | Copilot | OpenCode |
-| --- | --- | --- | --- | --- |
-| `read-only` | native (`--disallowedTools Write,Edit,Bash,NotebookEdit`) | native (`--sandbox read-only`) | native (`--deny-tool=write --deny-tool=shell`) | native (`permission.edit=deny`) |
-| `restricted-write` (per `allowed_paths`) | ⚠ no per-path filter → Layer 3 enforces | ⚠ no per-path filter → Layer 3 enforces | ✅ native (`--allow-tool=write(path)`) | ✅ native (`permission.edit` per pattern) |
-| `workspace-write` | native (`--permission-mode acceptEdits`) | native (`--sandbox workspace-write`) | native (`--allow-tool=write`) | native (`permission.edit=allow`) |
-| `dangerous` | bypass (`--permission-mode bypassPermissions`) | bypass (`--sandbox danger-full-access`) | bypass (`--allow-all-tools`) | bypass (`--dangerously-skip-permissions`) |
-
-⚠ Claude and Codex do not expose per-path write filters in their CLIs. For these runners, the agent *can* write anywhere it has permission to — Singleton's post-run snapshot diff is what fails the step when the write lands outside `allowed_paths`. Layer 3 covers both runners with a deterministic check that does not depend on the agent cooperating.
-
-Tests covering Layer 3: see [`packages/cli/src/security/policy.test.js`](packages/cli/src/security/policy.test.js) (`assertWriteAllowed` atomic predicate, including `../` traversal and blocked-path patterns), [`packages/cli/src/executor/snapshot-manager.test.js`](packages/cli/src/executor/snapshot-manager.test.js) (snapshot restore and skip coverage), and [`packages/cli/src/executor.test.js`](packages/cli/src/executor.test.js) (`describe('Layer 3 — post-run snapshot diff …')` end-to-end without any LLM in the loop).
-
-## Examples
-
-The repository ships with runnable example projects:
-
-| Example | Providers | Purpose |
-| ------- | --------- | ------- |
-| `examples/claude-code-review` | Claude | Text spec -> scout -> code writer -> reviewer |
-| `examples/codex-code-review` | Codex | Same code workflow, using Codex only |
-| `examples/mixed-code-review` | Claude + Codex | Claude scouts/reviews, Codex edits code |
-| `examples/frontend-audit` | Claude | Read-only frontend audit pipeline |
-| `examples/opencode-review` | OpenCode | Experimental read-only review pipeline |
-
-The code-review examples are portable templates: they do not ship a toy source file. When you run them for real, provide a spec, a target file path, and the same file as readable context from your own project.
-
-Validate any example without calling an LLM:
+Validate the bundled mixed-provider example without calling an LLM:
 
 ```bash
 singleton run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json --dry-run
 ```
 
-## Project layout
+To run the same template for real, copy or adapt `examples/mixed-code-review/.singleton` into the target project, then run the pipeline from that project. Writer steps are restricted to `src/` by default.
 
-Singleton is project-local. In your target repo:
+```bash
+singleton run --pipeline .singleton/pipelines/text-spec-to-code-review-mixed.json
+```
+
+The pipeline prompts for:
+
+- a text spec
+- a target file path
+- the same target file as readable context
+
+Use debug mode to inspect the prompt, edit runtime inputs, review outputs, or replay one step:
+
+```bash
+singleton run --pipeline .singleton/pipelines/text-spec-to-code-review-mixed.json --debug
+```
+
+## Current Beta Tips
+
+For now, the most reliable way to author pipelines is to edit the `.singleton` files directly with a local coding agent or LLM running in your terminal. Ask it to create or update:
+
+- `.singleton/agents/*.md`
+- `.singleton/pipelines/*.json`
+- `.singleton/security.json`
+
+The web builder is available and useful for visualizing the model, but it is still early and planned for redesign. For production-ish workflows, prefer terminal-authored Markdown agents and JSON pipelines, then validate with `--dry-run`.
+
+Singleton currently works best in a Unix-like terminal environment. The project is primarily developed and tested from macOS Terminal/iTerm-style shells; Linux should be the closest runtime profile. Native Windows terminal support is not the main target today, so use WSL if you need to run Singleton on Windows.
+
+## Everyday CLI
+
+Start the Singleton shell:
+
+```bash
+singleton
+```
+
+Common REPL commands:
+
+```txt
+/scan
+/new
+/run <pipeline> [--dry] [--verbose] [--debug]
+/serve
+/commit-last
+/ls
+/help
+```
+
+Create a new agent directly:
+
+```bash
+singleton new --root /path/to/project
+```
+
+Scan agents and refresh `.singleton/agents.json`:
+
+```bash
+singleton scan /path/to/project
+```
+
+## Builder
+
+If you installed the package, `singleton serve` starts the project API and serves the built web UI:
+
+```bash
+singleton serve --root /path/to/project
+# http://localhost:4317
+```
+
+When developing the web app from source, run the API and Vite separately:
+
+```bash
+singleton serve --root /path/to/project
+cd packages/web
+npm run dev
+# http://localhost:5173
+```
+
+The Vite dev server proxies `/api` to `http://localhost:4317`.
+
+## How It Works
+
+A Singleton project usually contains:
 
 ```txt
 my-project/
   .singleton/
-    agents/      # your Singleton agents
-    pipelines/   # saved pipelines
-    runs/        # versioned run artifacts
-  .github/
-    agents/      # optional repo-level Copilot profiles (*.agent.md)
+    agents/      # Singleton-native Markdown agents
+    pipelines/   # saved pipeline JSON files
+    runs/        # run artifacts and manifests
 ```
 
-`.claude/agents/` is also scanned for Singleton-compatible agents. `.github/agents/*.agent.md` is not scanned as Singleton agents; it is only used by Copilot when a Singleton agent sets `runner_agent`.
+An agent is a Markdown file with a `## Config` section and a prompt:
 
-Copilot does not require `.github/agents`. If `runner_agent` is omitted, Copilot uses its default agent. If `runner_agent` is set, Copilot can resolve it from a repo-level profile, a user-level profile, or an organization-level profile. Singleton warns when a repo-level profile is not found, but does not fail preflight.
+```markdown
+# Code Writer
 
-`AGENTS.md` is forwarded to Codex as project context.
+## Config
 
-## Screenshots
+- **id**: code-writer
+- **description**: Applies a bounded implementation.
+- **inputs**: spec, target_path
+- **outputs**: execution_report
+- **provider**: codex
+- **model**: gpt-5.4
+- **security_profile**: restricted-write
+- **allowed_paths**: src/
 
-| Home                                                  | Pipeline run                                              |
-| ----------------------------------------------------- | --------------------------------------------------------- |
-| ![Home](.github/assets/singleton_img_home.png)        | ![Run](.github/assets/singleton_img_pipeline.png)         |
-| **Help**                                              | **Run summary**                                           |
-| ![Help](.github/assets/singleton_img_help.png)        | ![Summary](.github/assets/singleton_img_pipeline_finished.png) |
+---
 
-## Repo
+## Prompt
+
+Apply the requested change to `<target_path>` and return a concise report.
+```
+
+A pipeline is a JSON file with ordered `steps[]`. The builder may also store `nodes[]` and graph metadata for visual editing, but runtime execution follows `steps[]` in the saved order. `$PIPE` references must point to outputs from earlier steps; preflight fails on future or missing references.
+
+Step inputs and outputs use four reference types:
+
+| Reference | Direction | Purpose |
+| --- | --- | --- |
+| `$INPUT:<id>` | input | runtime text or file input |
+| `$FILE:<path>` | input/output | read or write one file |
+| `$PIPE:<agent>.<out>` | input | consume an earlier step output |
+| `$FILES:<dir>` | output | write multiple files from a JSON manifest |
+
+Each real run writes `.singleton/runs/<id>/run-manifest.json`, even when the pipeline fails after starting.
+
+## Security
+
+Singleton resolves a `security_profile` for every step:
+
+- `read-only`
+- `restricted-write`
+- `workspace-write`
+- `dangerous`
+
+Enforcement happens in three layers:
+
+1. prompt policy injected into the step message
+2. provider-native CLI permissions where available
+3. deterministic post-run snapshot diff against the project filesystem
+
+The third layer is the main guarantee. It catches direct file edits made by provider CLIs even when they did not go through a declared `$FILE` or `$FILES` output.
+
+Recommended defaults:
+
+- scouts, auditors, planners, reviewers: `read-only`
+- code writers: `restricted-write` with the smallest useful `allowed_paths`
+- broad refactors: `restricted-write` with a project directory such as `src`
+- avoid `dangerous` outside local experiments
+
+## Providers
+
+Singleton currently supports:
+
+| Provider | CLI | Notes |
+| --- | --- | --- |
+| Claude | `claude` | supports `model` and Claude `permission_mode` |
+| Codex | `codex` | receives `AGENTS.md` / `AGENTS.override.md` as project instructions |
+| Copilot | `copilot` | supports optional `runner_agent` mapped to `--agent` |
+| OpenCode | `opencode` | experimental provider with native permission config injection |
+
+Singleton has no hosted backend. Provider CLIs still use their own networked services according to their normal behavior.
+
+## Agent Sources
+
+Singleton scans Markdown agents from:
+
+- `.singleton/agents/*.md`
+- `.claude/agents/*.md`
+- `.github/agents/*.md`
+- `.opencode/agents/*.md`
+
+When duplicate agent ids exist, `.singleton/agents` wins over compatibility sources.
+
+Copilot repo-level profiles are usually `.github/agents/*.agent.md` and are also used by Copilot when a Singleton agent sets `runner_agent`. If no `runner_agent` is set, Copilot uses its default agent.
+
+`AGENTS.md` and `AGENTS.override.md` are not Singleton agents; they are forwarded to Codex as project context.
+
+## Examples
+
+| Example | Providers | Purpose |
+| --- | --- | --- |
+| `examples/claude-code-review` | Claude | Text spec -> scout -> code writer -> reviewer |
+| `examples/codex-code-review` | Codex | Same workflow with Codex only |
+| `examples/mixed-code-review` | Claude + Codex | Claude scouts/reviews, Codex edits code |
+| `examples/frontend-audit` | Claude | Read-only frontend audit |
+| `examples/opencode-review` | OpenCode | Experimental read-only review |
+
+The code-review examples are templates. They do not ship a toy source file; use `--dry-run` as-is, then copy or adapt their `.singleton` folders into a real project before running writer steps against real files.
+
+## Documentation
+
+- Full behavior reference: [docs/reference.md](docs/reference.md)
+- Release notes: [CHANGELOG.md](CHANGELOG.md)
+
+## Repo Layout
 
 ```txt
 packages/cli      CLI, REPL, executor, runners

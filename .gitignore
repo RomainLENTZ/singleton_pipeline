@@ -13,6 +13,7 @@ build/
 *.md
 !README.md
 !README.*
+!CHANGELOG.md
 !AGENTS.md
 !AGENTS.override.md
 /AGENTS.md

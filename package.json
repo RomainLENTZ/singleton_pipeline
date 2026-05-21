@@ -41,6 +41,7 @@
     "packages/web/dist/**",
     "packages/web/package.json",
     "docs/reference.md",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],

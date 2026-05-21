@@ -58,7 +58,17 @@ Meaning:
 Compatibility sources:
 
 - `.claude/agents/` is scanned as a legacy or external source
+- `.github/agents/*.md` is scanned as a Copilot-compatible source
+- `.opencode/agents/*.md` is scanned as an OpenCode-compatible source
 - `AGENTS.md` and `AGENTS.override.md` are not agents; they are Codex project instructions
+
+When duplicate agent ids exist, higher-priority sources win:
+
+1. `.singleton/agents/*.md`
+2. compatibility sources (`.claude/agents/*.md`, `.github/agents/*.md`, `.opencode/agents/*.md`)
+
+For compatibility sources, Singleton infers the provider from the directory when the agent file does not set `provider` explicitly.
+If the same id appears in multiple compatibility sources, the first scanned source wins in this order: `.claude`, then `.github`, then `.opencode`.
 
 ## Agent model
 
@@ -96,6 +106,7 @@ Your prompt here.
 - `provider`
 - `model`
 - `runner_agent`
+- `opencode_agent` (legacy alias for `runner_agent`)
 - `permission_mode`
 - `estimated_tokens`
 - `security_profile`
@@ -112,7 +123,8 @@ Your prompt here.
 - `provider` — execution backend, currently `claude`, `codex`, `copilot`, or experimental `opencode`
 - `model` — provider-specific model name
 - `runner_agent` — provider-side agent name; currently used by Copilot and OpenCode `--agent` options
-- `permission_mode` — applies to Claude only, ignored for Codex runs
+- `opencode_agent` — legacy alias accepted for OpenCode agent selection
+- `permission_mode` — applies to Claude only; non-Claude providers ignore it and preflight warns
 - `estimated_tokens` — optional metadata for planning
 - `security_profile` — Singleton write policy profile
 - `allowed_paths` — comma-separated write allowlist used by `restricted-write`
@@ -135,8 +147,10 @@ Model resolution:
 Runner agent resolution (Copilot and OpenCode):
 
 1. `step.runner_agent`
-2. `agent.runner_agent`
-3. no explicit runner agent, so the provider uses its default agent
+2. `step.opencode_agent`
+3. `agent.runner_agent`
+4. `agent.opencode_agent`
+5. no explicit runner agent, so the provider uses its default agent
 
 Permission mode resolution (Claude only):
 
@@ -310,9 +324,9 @@ For `provider: copilot`, Singleton converts the resolved security policy to Copi
 Mapping:
 
 - `read-only` — allows `read`, denies `write`, `shell`, `url`, and `memory`.
-- `restricted-write` — allows `read` and `write(...)` only for each `allowed_paths` entry.
-- `workspace-write` — allows `read` and `write`, while still denying dangerous shell defaults such as `git push`.
-- `dangerous` — uses Copilot's broad tool mode and keeps explicit deny rules where possible.
+- `restricted-write` — allows `read`, allows `write(...)` only for each `allowed_paths` entry, allows `shell`, denies `shell(git push)`, `url`, and `memory`.
+- `workspace-write` — allows `read`, `write`, and `shell`, while still denying `shell(git push)`, `url`, and `memory`.
+- `dangerous` — uses Copilot's broad tool mode, still denies `memory`, and still applies blocked-path write denies when configured.
 
 Examples:
 
@@ -321,6 +335,7 @@ restricted-write + allowed_paths: src, vite.config.ts
 → --allow-tool=read
 → --allow-tool=write(src/**)
 → --allow-tool=write(vite.config.ts)
+→ --allow-tool=shell
 → --deny-tool=shell(git push)
 → --deny-tool=url
 → --deny-tool=memory
@@ -388,7 +403,8 @@ Use strict policies for multi-step pipelines:
 - broad project refactors: `restricted-write` with a directory like `src`
 - avoid `dangerous` except for local experiments
 
-For Claude writers that need file tools, set both layers explicitly:
+Claude maps `restricted-write` to `acceptEdits` when `permission_mode` is omitted, so most Claude writer steps only need a `security_profile` and `allowed_paths`.
+Legacy pipelines may still set `permission_mode: bypassPermissions` explicitly:
 
 ```json
 {
@@ -410,8 +426,10 @@ Conceptually:
 - agent nodes represent executable steps
 - edges connect outputs to downstream inputs
 
-At runtime, Singleton executes steps in dependency order.
-Dependencies are derived from the serialized references used in step inputs, especially `$PIPE:...`.
+At runtime, Singleton executes the serialized `steps[]` array in order.
+The builder writes this array in topological order when it saves a graph, but the CLI does not reorder steps while running a hand-authored JSON file.
+`$PIPE:...` references must therefore point to outputs from earlier steps.
+Preflight rejects future, unknown, or missing `$PIPE` references before any provider CLI is called.
 
 A complete example is in [Full pipeline example](#full-pipeline-example).
 
@@ -517,7 +535,7 @@ Pass one step output to another.
 Behavior:
 
 - references a previous step output kept in memory during the run
-- drives dependency ordering — `$PIPE` is what makes the graph topological
+- must be ordered manually in `steps[]` for hand-authored pipelines
 - must point to an already-available upstream step output, otherwise preflight fails
 
 ### `$FILES:<dir>`
@@ -715,6 +733,10 @@ Singleton distinguishes between:
 - **deliverables** — real project files outside `.singleton`
 - **intermediates** — reports, notes, plans, debug artifacts, or output files inside `.singleton`
 
+Declared `$FILE` or `$FILES` sinks under `.singleton/` are treated as internal artifacts.
+When a sink targets `.singleton/<something>` outside `.singleton/runs/`, Singleton redirects it into the current step workspace inside `.singleton/runs/<run-id>/`.
+This keeps project-local output aliases such as `$FILE:.singleton/output/report.md` stable while preserving per-run traceability.
+
 This distinction is used in:
 
 - run manifests
@@ -779,7 +801,14 @@ Singleton's core model is provider-neutral:
 - supports optional `permission_mode`
 - supports explicit `model`
 
-If `permission_mode` is not set, Singleton does not inject one explicitly.
+If `permission_mode` is set, Singleton currently accepts `bypassPermissions` and passes it through.
+If `permission_mode` is not set, Singleton maps `security_profile` to Claude CLI permissions:
+
+- `read-only` disables `Write`, `Edit`, `Bash`, and `NotebookEdit`
+- `restricted-write` and `workspace-write` use `acceptEdits`
+- `dangerous` uses `bypassPermissions`
+
+Claude does not expose a native per-path write filter, so `restricted-write` relies on Singleton's post-run snapshot diff to reject edits outside `allowed_paths`.
 
 ### Codex
 
@@ -857,6 +886,8 @@ What it does:
 
 - scans `.singleton/agents`
 - scans `.claude/agents`
+- scans `.github/agents`
+- scans `.opencode/agents`
 - prints id, description, source, provider, permission mode, inputs, outputs
 - writes `.singleton/agents.json`
 
@@ -871,16 +902,21 @@ singleton run --pipeline /path/to/project/.singleton/pipelines/my-pipeline.json
 Flags:
 
 - `--dry-run` — validate without calling any LLM CLI
-- `--verbose` — surface raw provider stdout/stderr
+- `--verbose` — show prompt and output excerpts in the run log
 - `--debug` — pause before each step for inspect/edit/skip/abort controls
 
 ### `serve`
 
-Start the builder API server.
+Start the builder API server and serve the built web UI when `packages/web/dist` is present in the installed package.
 
 ```bash
 singleton serve --root /path/to/project
 ```
+
+Options:
+
+- `--root <path>` — project root, defaults to the current directory
+- `--port <port>` — server port, defaults to `4317`
 
 ### `new`
 
@@ -944,14 +980,16 @@ Shell features:
 
 ## Builder
 
-The web builder is the visual authoring interface served by `singleton serve` + `packages/web` (Vite dev server on port 5173).
+The web builder is the visual authoring interface.
+In an installed package, `singleton serve` serves the built UI and API from one server, usually `http://localhost:4317`.
+During source development, run `singleton serve` for the API and `npm run dev -w @singleton/web` or `cd packages/web && npm run dev` for the Vite UI on port `5173`.
 
 It lets you:
 
 - browse scanned agents and drop them on a canvas as agent nodes
 - add input nodes (`text` or `file`) and bind them to step inputs
 - draw edges from agent outputs to downstream inputs — these become `$PIPE` references
-- bind step outputs to `$FILE` / `$FILES` sinks
+- generate default `$FILE` sinks for each agent output
 - save the resulting graph as a pipeline JSON in `.singleton/pipelines/`
 
 The serialization mapping:
@@ -959,12 +997,19 @@ The serialization mapping:
 - input nodes → `$INPUT:<id>` references
 - graph edges → serialized references
 - topological order → execution order
+- saved `steps[]` order → CLI runtime order
+- agent outputs → default `$FILE:./output/<agent>.<output>.md` sinks
 
 Cycles are rejected at save time.
 
+The runtime only requires `steps[]`.
+The visual `nodes[]` / `edges[]` fields are used by the builder and by runtime input collection for `$INPUT` definitions.
+
 ## Full pipeline example
 
-Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For executable examples, see `examples/claude-code-review/`, `examples/codex-code-review/`, `examples/mixed-code-review/`, `examples/frontend-audit/`, and `examples/opencode-review/`.
+Illustrative only — this is not a ready-to-run project. The agents `code-generator` and `code-review` are placeholders to show how the pieces fit together. For repository examples, see `examples/claude-code-review/`, `examples/codex-code-review/`, `examples/mixed-code-review/`, `examples/frontend-audit/`, and `examples/opencode-review/`.
+
+The code-review examples are templates: use their `--dry-run` commands as-is, then copy or adapt their `.singleton` folders into a real target project before running writer steps against real files.
 
 A two-step pipeline: a generator writes code from a spec, a reviewer reads that code and emits a report.
 
@@ -996,7 +1041,7 @@ A two-step pipeline: a generator writes code from a spec, a reviewer reads that 
         "source_code": "$PIPE:code-generator.source_code"
       },
       "outputs": {
-        "report": "$FILE:.singleton/runs/latest/review.md"
+        "report": "$FILE:.singleton/output/review.md"
       }
     }
   ]
@@ -1009,7 +1054,7 @@ What this pipeline does at runtime:
 2. runs `code-generator` with the spec content injected as `<file>...</file>`
 3. writes the generator's output to `src/generated/output.js` (a deliverable)
 4. runs `code-review` with the generator's output passed via `$PIPE`
-5. writes the review to `.singleton/runs/latest/review.md` (an intermediate)
+5. writes the review as an intermediate in the current run workspace
 6. emits a manifest distinguishing the deliverable from the intermediate
 
 See `examples/mixed-code-review/` for an end-to-end example using both Claude and Codex.
