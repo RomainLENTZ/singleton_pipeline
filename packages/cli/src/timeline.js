@@ -1,5 +1,5 @@
 import blessed from 'blessed';
-import { C } from './shell.js';
+import { S } from './shell.js';
 
 const FRAMES = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
 
@@ -13,10 +13,10 @@ export function createTimeline(stepNames, widgets = null) {
   let spinnerInterval = null;
   let spinnerFrame    = 0;
 
-  let screen, logPanel, statusBox, ownScreen = false;
+  let screen, logPanel, statusBox, setLabel = null, mirror = null, ownScreen = false;
 
   if (widgets) {
-    ({ screen, logPanel, statusBox } = widgets);
+    ({ screen, logPanel, statusBox, setLabel = null, mirror = null } = widgets);
   } else {
     ownScreen = true;
     screen = blessed.screen({ smartCSR: true, title: 'Singleton' });
@@ -34,7 +34,7 @@ export function createTimeline(stepNames, widgets = null) {
       orientation: 'horizontal',
       bottom: 5, left: 0,
       width: '100%',
-      style: { fg: C.line }
+      style: { fg: S.border }
     });
 
     statusBox = blessed.box({
@@ -52,19 +52,19 @@ export function createTimeline(stepNames, widgets = null) {
   }
 
   function dot(status, frame = 0) {
-    if (status === 'done')    return `{${C.mint}-fg}●{/}`;
-    if (status === 'running') return `{#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}`;
-    if (status === 'paused')  return `{${C.peach}-fg}●{/}`;
-    if (status === 'error')   return `{${C.salmon}-fg}●{/}`;
-    return `{${C.ghost}-fg}○{/}`;
+    if (status === 'done')    return `{${S.success}-fg}●{/}`;
+    if (status === 'running') return `{${S.text}-fg}${FRAMES[frame % FRAMES.length]}{/}`;
+    if (status === 'paused')  return `{${S.warning}-fg}●{/}`;
+    if (status === 'error')   return `{${S.error}-fg}●{/}`;
+    return `{${S.subtle}-fg}○{/}`;
   }
 
   function shimmerName(text, frame = 0) {
     const peak = frame % (text.length + 6);
     return text.split('').map((ch, i) => {
       const dist = Math.abs(i - peak);
-      let color = C.violet;
-      if (dist === 0) color = '#FFFFFF';
+      let color = S.accent;
+      if (dist === 0) color = S.text;
       else if (dist === 1) color = '#EDD9FF';
       else if (dist === 2) color = '#D4B0FE';
       return ch === ' ' ? ch : `{${color}-fg}{bold}${ch}{/}`;
@@ -72,23 +72,23 @@ export function createTimeline(stepNames, widgets = null) {
   }
 
   function compactDots(frame = 0) {
-    return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${C.ghost}-fg}─{/}  `);
+    return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${S.subtle}-fg}─{/}  `);
   }
 
   function renderTimeline(frame = 0) {
     const currentMeta = runningIdx >= 0 && meta[runningIdx]
-      ? `  {${C.ghost}-fg}${meta[runningIdx]}{/}`
+      ? `  {${S.muted}-fg}${meta[runningIdx]}{/}`
       : '';
     const isPaused = runningIdx >= 0 && statuses[runningIdx] === 'paused';
     const activityLabel = isPaused
-      ? `{${C.peach}-fg}{bold}Paused{/}`
+      ? `{${S.warning}-fg}{bold}Paused{/}`
       : `{bold}Running{/}`;
     const activityIcon = isPaused
-      ? `{${C.peach}-fg}●{/}`
-      : `{#FFFFFF-fg}${FRAMES[frame % FRAMES.length]}{/}`;
+      ? `{${S.warning}-fg}●{/}`
+      : `{${S.text}-fg}${FRAMES[frame % FRAMES.length]}{/}`;
     const runningLabel = runningIdx >= 0
-      ? `${activityLabel}  ${activityIcon}  ${shimmerName(stepNames[runningIdx], frame)}  {${C.ghost}-fg}step ${runningIdx + 1}/${N}{/}${currentMeta}`
-      : `{bold}Running:{/} {${C.dimV}-fg}idle{/}`;
+      ? `${activityLabel}  ${activityIcon}  ${shimmerName(stepNames[runningIdx], frame)}${currentMeta}`
+      : `{bold}Running:{/} {${S.muted}-fg}idle{/}`;
     const statusLines = [
       '',
       runningLabel,
@@ -96,14 +96,48 @@ export function createTimeline(stepNames, widgets = null) {
       compactDots(frame)
     ];
     statusBox.setContent(statusLines.join('\n'));
+    if (setLabel) {
+      if (runningIdx < 0) {
+        setLabel('');
+      } else if (runningIdx === 0) {
+        // Index 0 is always the preflight pseudo-step — it's not a "real" pipeline step,
+        // so show "preflight" rather than fold it into the X/N count.
+        const labelText = isPaused ? 'preflight — paused' : 'preflight';
+        setLabel(`{${S.text}-fg}{bold}${labelText}{/}`);
+      } else {
+        // Real steps: 1..(N-1). Subtract 1 from N to exclude preflight from the total.
+        const labelText = isPaused
+          ? `step ${runningIdx}/${N - 1} — paused`
+          : `step ${runningIdx}/${N - 1}`;
+        setLabel(`{${S.text}-fg}{bold}${labelText}{/}`);
+      }
+    }
     screen.render();
   }
 
   renderTimeline();
 
   return {
-    log(text)      { logPanel.log(`{${C.blue}-fg}${text}{/}`);  screen.render(); },
-    logMuted(text) { logPanel.log(`{${C.dimV}-fg}${text}{/}`);  screen.render(); },
+    log(text)        { const s = `{${S.keyword}-fg}${text}{/}`; logPanel.log(s); mirror?.(s); screen.render(); },
+    logMuted(text)   { const s = `{${S.muted}-fg}${text}{/}`;   logPanel.log(s); mirror?.(s); screen.render(); },
+    logSuccess(text) { const s = `{${S.success}-fg}${text}{/}`; logPanel.log(s); mirror?.(s); screen.render(); },
+    logError(text)   { const s = `{${S.error}-fg}${text}{/}`;   logPanel.log(s); mirror?.(s); screen.render(); },
+    logDiffLine(raw) {
+      const text = String(raw ?? '');
+      const body = text.replace(/^\s+/, '');
+      // Default to S.subtle for all non-signal lines (meta git, context, untracked previews) —
+      // one consistent gray instead of two slightly different ones. Check git meta starts before
+      // +/- because +++ and --- would otherwise match the body coloring.
+      let color = S.muted;
+      if (/^(diff --git|index |--- |\+\+\+ )/.test(body))      color = S.muted;
+      else if (body.startsWith('@@'))                           color = S.keyword;
+      else if (body.startsWith('+'))                            color = S.success;
+      else if (body.startsWith('-'))                            color = S.error;
+      const s = `{${color}-fg}${text}{/}`;
+      logPanel.log(s);
+      mirror?.(s);
+      screen.render();
+    },
 
     setRunning(i, info = '') {
       if (spinnerInterval) { clearInterval(spinnerInterval); spinnerInterval = null; }

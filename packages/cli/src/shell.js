@@ -13,6 +13,30 @@ export const C = {
   ghost:   '#797C81',   // gris discret lisible sur fond sombre
 };
 
+// ── Semantic tokens — one color, one role ────────────────────────
+// Use these everywhere. Each token carries meaning, not decoration.
+//   text     — primary readable body text
+//   muted    — secondary text, metadata (dates, versions, descriptions)
+//   subtle   — decorative separators (·, ─)
+//   accent   — brand, interactive elements (slash commands, agent IDs)
+//   keyword  — technical labels and feature/provider names
+//   string   — user data (pipeline names, paths, URLs)
+//   success  — positive markers (✓), confirmations
+//   warning  — attention markers (!), announcements (New)
+//   error    — failure markers (✕), blocking errors
+export const S = {
+  text:    '#FFFFFF',
+  muted:   '#8E8B9E',   // soft cool gray, very subtly violet-tinted — reads as "quiet"
+  subtle:  '#797C81',
+  border:  '#4A4060',   // structural separators (blessed.line widgets, frames)
+  accent:  '#C084FC',
+  keyword: '#93C5FD',
+  string:  '#F9A8D4',
+  success: '#6EE7B7',
+  warning: '#FDBA74',
+  error:   '#FCA5A5',
+};
+
 export function createShell() {
   const screen = blessed.screen({ smartCSR: true, title: 'Singleton' });
   const inputHints = [
@@ -29,10 +53,12 @@ export function createShell() {
     width: '100%', height: '100%-4',
     scrollable: true, alwaysScroll: true,
     tags: true,
-    padding: { left: 2, top: 1, right: 2 },
+    border: { type: 'line' },
+    style: { border: { fg: S.border } },
+    padding: { left: 1, top: 0, right: 1 },
     scrollbar: {
       ch: '│',
-      style: { fg: C.line }
+      style: { fg: S.border }
     }
   });
 
@@ -44,32 +70,36 @@ export function createShell() {
     hidden: true,
     scrollable: true,
     alwaysScroll: true,
-    padding: { left: 2, top: 1, right: 2 },
+    border: { type: 'line' },
+    style: { border: { fg: S.border } },
+    padding: { left: 1, top: 0, right: 1 },
     scrollbar: {
       ch: '│',
-      style: { fg: C.line }
+      style: { fg: S.border }
     }
   });
 
-  const pipelineSep = blessed.line({
-    orientation: 'horizontal',
-    bottom: 8, left: 0, width: '100%',
-    style: { fg: C.line }
-  });
-
   const pipelineStatus = blessed.box({
-    bottom: 4, left: 0,
+    bottom: 5, left: 0,
     width: '100%', height: 4,
     tags: true,
     hidden: true,
     padding: { left: 2, right: 2 }
   });
 
+  // Label overlay sitting on the top border of pipelineLog (e.g. "Step 2/4" or "input waiting")
+  const pipelineLabel = blessed.box({
+    top: 0, left: 4,
+    width: 'shrink', height: 1,
+    tags: true,
+    hidden: true
+  });
+
   // ── Shell bar (toujours visible) ───────────────────────────────
   const sep1 = blessed.line({
     orientation: 'horizontal',
     bottom: 3, left: 0, width: '100%',
-    style: { fg: C.line }
+    style: { fg: S.border }
   });
 
   const suggestBox = blessed.box({
@@ -90,7 +120,7 @@ export function createShell() {
   const sep2 = blessed.line({
     orientation: 'horizontal',
     bottom: 1, left: 0, width: '100%',
-    style: { fg: C.line }
+    style: { fg: S.border }
   });
 
   const footerLeftBox = blessed.box({
@@ -116,8 +146,8 @@ export function createShell() {
 
   screen.append(content);
   screen.append(pipelineLog);
-  screen.append(pipelineSep);
   screen.append(pipelineStatus);
+  screen.append(pipelineLabel);
   screen.append(suggestBox);
   screen.append(sep1);
   screen.append(promptBox);
@@ -126,7 +156,6 @@ export function createShell() {
   screen.append(footerRightBox);
   screen.append(footerCenterBox);
 
-  pipelineSep.hide();
   pipelineStatus.hide();
 
   // ── Input state ─────────────────────────────────────────────────
@@ -217,21 +246,23 @@ export function createShell() {
   function updatePrompt() {
     if (promptMode) {
       const message = String(promptMode.message || '');
+      // If the caller passed pre-tagged content, respect it. Otherwise the message
+      // belongs to the "awaiting input" state → bold + warning to match the ambient frame.
       const renderedMessage = message.includes('{')
         ? message
-        : `{${C.dimV}-fg}${message}{/}`;
+        : `{${S.warning}-fg}{bold}${message}{/}`;
       const marker = message.includes('Debug action')
         ? ''
-        : `{${C.pink}-fg}?{/}  `;
+        : `{${S.warning}-fg}{bold}?{/}  `;
       promptBox.setContent(
-        `${marker}${renderedMessage}  {${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`
+        `${marker}${renderedMessage}  {${S.muted}-fg}›{/}  ${buffer}{${S.accent}-fg}▌{/}`
       );
     } else {
       if (buffer) {
-        promptBox.setContent(`{${C.dimV}-fg}›{/}  ${buffer}{${C.violet}-fg}▌{/}`);
+        promptBox.setContent(`{${S.muted}-fg}›{/}  ${buffer}{${S.accent}-fg}▌{/}`);
       } else {
         const hint = history.length === 0 ? inputHints[0] : inputHints[hintIndex];
-        promptBox.setContent(`{${C.dimV}-fg}›{/}  {${C.violet}-fg}▌{/}{#797C81-fg}${hint}{/}`);
+        promptBox.setContent(`{${S.muted}-fg}›{/}  {${S.accent}-fg}▌{/}{${S.subtle}-fg}${hint}{/}`);
       }
     }
     screen.render();
@@ -348,10 +379,10 @@ export function createShell() {
     if (!inputEnabled && !promptMode) return;
 
     if (promptMode && key.name === 'escape') {
-      const { resolve, message } = promptMode;
+      const { resolve, message, silent } = promptMode;
       promptMode = null;
       buffer = '';
-      log(`{${C.ghost}-fg}↩ cancelled{/} {${C.dimV}-fg}${message}{/}`);
+      if (!silent) log(`{${S.subtle}-fg}↩ cancelled{/} {${S.muted}-fg}${message}{/}`);
       updatePrompt();
       resolve('__SINGLETON_ESC__');
       return;
@@ -418,9 +449,9 @@ export function createShell() {
       buffer = '';
       hideSuggestions();
       if (promptMode) {
-        const { resolve, message } = promptMode;
+        const { resolve, message, silent } = promptMode;
         promptMode = null;
-        log(`{${C.pink}-fg}?{/}  {${C.dimV}-fg}${message}{/}  ${value}`);
+        if (!silent) log(`{${S.warning}-fg}{bold}?{/}  {${S.muted}-fg}${message}{/}  ${value}`);
         updatePrompt();
         resolve(value);
       } else {
@@ -454,12 +485,72 @@ export function createShell() {
 
   updatePrompt();
 
+  // Mode → border color mapping. Drives the "ambient state" frame around the log panel.
+  //   null/'idle'    → S.border (faint, structural)
+  //   'running'      → S.keyword (blue, run in progress)
+  //   'awaiting'     → S.warning (orange, waiting for human input)
+  //   'error'        → S.error (red, last run failed)
+  //   'debug'        → S.warning (orange, debug mode active)
+  // Label overlay shown on the top border of the pipeline log frame.
+  // Timeline writes the step indicator (step X/N). The executor can override
+  // with "input waiting" while a prompt is pending — overrides are sticky
+  // until cleared, so the timeline's spinner-tick re-renders don't clobber them.
+  let pipelineLabelOverride = null;
+  function writePipelineLabel(text) {
+    if (!text) {
+      pipelineLabel.setContent('');
+      pipelineLabel.hide();
+    } else {
+      pipelineLabel.setContent(` ${text} `);
+      pipelineLabel.show();
+    }
+    screen.render();
+  }
+  function applyPipelineLabel(text) {
+    if (pipelineLabelOverride !== null) return;
+    writePipelineLabel(text);
+  }
+  function setPipelineLabel(text) {
+    pipelineLabelOverride = text;
+    writePipelineLabel(`{${S.warning}-fg}{bold}${text}{/}`);
+  }
+  function clearPipelineLabel() {
+    pipelineLabelOverride = null;
+    writePipelineLabel('');
+  }
+
+  // Mode → border color. Two-layer state:
+  //   baseMode  — ambient mode set by the executor ('running' during a step, etc.)
+  //   currentMode — what is actually painted; prompts override to 'awaiting' and restore baseMode on resolve.
+  // Removed 'debug' as its own mode: a debug pause IS an awaiting state, a running debug step IS running.
+  let baseMode = null;
+  function applyMode(mode) {
+    const map = {
+      running:  S.keyword,
+      awaiting: S.warning,
+      error:    S.error,
+    };
+    const color = map[mode] || S.border;
+    content.style.border.fg = color;
+    pipelineLog.style.border.fg = color;
+    sep1.style.fg = color;
+    sep2.style.fg = color;
+    screen.render();
+  }
+  function setMode(mode) {
+    baseMode = mode;
+    applyMode(mode);
+  }
+
   return {
     log,
-    logMuted(text)  { log(`{${C.dimV}-fg}${text}{/}`); },
-    logAccent(text) { log(`{${C.violet}-fg}${text}{/}`); },
+    logMuted(text)  { log(`{${S.muted}-fg}${text}{/}`); },
+    logAccent(text) { log(`{${S.accent}-fg}${text}{/}`); },
     setFooter,
     setFooterCenter,
+    setMode,
+    setPipelineLabel,
+    clearPipelineLabel,
 
     clear() { content.setContent(''); screen.render(); },
     onCommand(fn)  { onSubmit = fn; },
@@ -499,9 +590,20 @@ export function createShell() {
     disableInput() { inputEnabled = false; hideSuggestions(); resetHistoryNav(); screen.render(); },
     enableInput()  { inputEnabled = true; buffer = ''; hideSuggestions(); resetHistoryNav(); updatePrompt(); },
 
-    prompt(message) {
+    prompt(message, { silent = false } = {}) {
       return new Promise((resolve) => {
-        promptMode = { resolve, message };
+        // Override ambient mode to 'awaiting' (orange) for the duration of the prompt,
+        // and restore the baseMode (e.g. 'running') once the user has answered.
+        const shouldOverride = baseMode === 'running';
+        if (shouldOverride) applyMode('awaiting');
+        promptMode = {
+          message,
+          silent,
+          resolve: (value) => {
+            if (shouldOverride) applyMode(baseMode);
+            resolve(value);
+          },
+        };
         buffer = '';
         hideSuggestions();
         resetHistoryNav();
@@ -509,7 +611,15 @@ export function createShell() {
       });
     },
 
-    pipelineWidgets: { screen, logPanel: pipelineLog, statusBox: pipelineStatus },
+    // Mirror sends every timeline.log call into the main `content` widget too, so the full
+    // run history survives exitPipelineMode (pipelineLog gets hidden, but content keeps it).
+    pipelineWidgets: {
+      screen,
+      logPanel: pipelineLog,
+      statusBox: pipelineStatus,
+      setLabel: applyPipelineLabel,
+      mirror: (text) => content.log(text),
+    },
 
     enterPipelineMode() {
       pipelineMode = true;
@@ -517,17 +627,19 @@ export function createShell() {
       pipelineLog.setContent('');
       pipelineStatus.setContent('');
       pipelineLog.show();
-      pipelineSep.show();
       pipelineStatus.show();
-      promptBox.setContent(`{${C.dimV}-fg}scroll: ↑ ↓ pgup pgdn home end{/}`);
+      pipelineLabel.show();
+      promptBox.setContent('');
       screen.render();
     },
 
     exitPipelineMode() {
       pipelineMode = false;
+      pipelineLabelOverride = null;
       pipelineLog.hide();
-      pipelineSep.hide();
       pipelineStatus.hide();
+      pipelineLabel.hide();
+      pipelineLabel.setContent('');
       content.show();
       updatePrompt();
       screen.render();

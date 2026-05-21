@@ -70,6 +70,29 @@ const DEBUG_POST_ACTION_HELP = [
   `{${S.error}-fg}■ abort{/}`,
 ].join(` {${S.subtle}-fg}·{/} `);
 
+// Compact one-line summary of the action the user picked, with the action's icon and color.
+// Replaces the noisy toolbar that used to get re-logged after each prompt.
+// e.g. {muted}[Step 1/2 input]{/} {success}▶ continue{/}
+const ACTION_LABEL = {
+  continue:         { icon: '▶', name: 'continue',    color: S.success },
+  inspect:          { icon: '?', name: 'inspect',     color: S.keyword },
+  'inspect-output': { icon: '?', name: 'output',      color: S.keyword },
+  'inspect-raw':    { icon: '?', name: 'raw output',  color: S.keyword },
+  'inspect-diff':   { icon: '±', name: 'diff',        color: S.warning },
+  edit:             { icon: '✎', name: 'edit',        color: S.warning },
+  skip:             { icon: '→', name: 'skip',        color: S.accent  },
+  replay:           { icon: '↻', name: 'replay',      color: S.accent  },
+  abort:            { icon: '■', name: 'abort',       color: S.error   },
+};
+
+export function logDebugChoice(timeline, { stepNumber, totalSteps, phase, action, suffix = '' }) {
+  const a = ACTION_LABEL[action] || { icon: '·', name: action, color: S.muted };
+  const tag = `{${S.muted}-fg}[Step ${stepNumber}/${totalSteps} ${phase}]{/}`;
+  const head = `{${a.color}-fg}${a.icon} ${a.name}{/}`;
+  const tail = suffix ? ` {${S.muted}-fg}${suffix}{/}` : '';
+  timeline.log(`${tag} ${head}${tail}`);
+}
+
 function logDebugSection(title, timeline) {
   const width = 72;
   const text = ` ${title} `;
@@ -222,7 +245,7 @@ async function logDebugDiffs({ changes, writes = [], cwd, timeline, getDiffPrevi
   for (const change of entries.slice(0, 8)) {
     timeline.log(`${debugToken.key(change.relPath)}`);
     const preview = await getDiffPreview(cwd, change.relPath);
-    for (const line of preview) timeline.logMuted(`  ${line}`);
+    for (const line of preview) timeline.logDiffLine(`  ${line}`);
   }
   if (entries.length > 8) {
     timeline.logMuted(`${debugToken.muted(`... ${entries.length - 8} more changed file(s)`)}`);
@@ -241,6 +264,8 @@ export function logSnapshotCoverage({ snapshot, timeline }) {
 
 export async function promptDebugPostStepDecision({
   step,
+  stepNumber,
+  totalSteps,
   parsed,
   outputNames,
   stepWrites,
@@ -258,6 +283,7 @@ export async function promptDebugPostStepDecision({
   debugEvents,
   getDiffPreview,
 }) {
+  const choose = (action, suffix = '') => logDebugChoice(timeline, { stepNumber, totalSteps, phase: 'output', action, suffix });
   const summary = {
     agent: step.agent,
     outputs: outputNames,
@@ -300,7 +326,7 @@ export async function promptDebugPostStepDecision({
 
   while (true) {
     const raw = shell
-      ? await shell.prompt(DEBUG_POST_ACTION_PROMPT)
+      ? await shell.prompt(DEBUG_POST_ACTION_PROMPT, { silent: true })
       : await input({ message: 'Debug output: continue, output, raw output, diff, replay, or abort? (c/o/r/d/p/a)', default: 'c' });
     if (isPromptCancelled(raw)) {
       timeline.logMuted(`${debugToken.muted('Cancelled. Back to debug output menu.')}`);
@@ -308,19 +334,23 @@ export async function promptDebugPostStepDecision({
     }
     const answer = String(raw || '').trim().toLowerCase();
     if (!answer || answer === 'c' || answer === 'continue') {
+      choose('continue');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'continue', ...summary });
       return 'continue';
     }
     if (answer === 'a' || answer === 'abort' || answer === 'stop') {
+      choose('abort');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'abort', ...summary });
       return 'abort';
     }
     if (answer === 'o' || answer === 'output' || answer === 'inspect') {
+      choose('inspect-output');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-output', ...summary });
       logDebugOutputs(parsed, outputNames, timeline);
       continue;
     }
     if (answer === 'r' || answer === 'raw' || answer === 'raw output') {
+      choose('inspect-raw');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-raw-output', ...summary });
       logDebugSection('Debug raw output', timeline);
       if (rawOutputPath) timeline.logMuted(`${debugToken.key('saved')} ${debugValue(rawOutputPath, 'path')}`);
@@ -330,6 +360,7 @@ export async function promptDebugPostStepDecision({
       continue;
     }
     if (answer === 'd' || answer === 'diff') {
+      choose('inspect-diff');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'inspect-diff', ...summary });
       await logDebugDiffs({ changes: stepChanges, writes: stepWrites, cwd, timeline, getDiffPreview });
       continue;
@@ -351,6 +382,7 @@ export async function promptDebugPostStepDecision({
         timeline.logMuted(`${debugToken.muted('Skipped folders such as .git, node_modules, dist, build, and .next are not restored.')}`);
         timeline.logMuted(`${debugToken.muted('External side effects such as commits, pushes, PRs, shell state, or network calls are not rolled back.')}`);
       }
+      choose('replay');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'post-step', action: 'replay', ...summary });
       return 'replay';
     }
@@ -484,9 +516,11 @@ export async function promptDebugStepDecision({
   );
   logDebugInputs(currentInputs, timeline);
 
+  const choose = (action, suffix = '') => logDebugChoice(timeline, { stepNumber, totalSteps, phase: 'input', action, suffix });
+
   while (true) {
     const raw = shell
-      ? await shell.prompt(DEBUG_ACTION_PROMPT)
+      ? await shell.prompt(DEBUG_ACTION_PROMPT, { silent: true })
       : await input({ message: 'Debug: continue, inspect, edit, skip, or abort? (c/i/e/s/a)', default: 'c' });
     if (isPromptCancelled(raw)) {
       timeline.logMuted(`${debugToken.muted('Cancelled. Back to debug action menu.')}`);
@@ -494,18 +528,22 @@ export async function promptDebugStepDecision({
     }
     const answer = String(raw || '').trim().toLowerCase();
     if (!answer || answer === 'c' || answer === 'continue') {
+      choose('continue');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'continue', ...summary });
       return { action: 'continue', inputs: currentInputs };
     }
     if (answer === 's' || answer === 'skip') {
+      choose('skip');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'skip', ...summary });
       return { action: 'skip', inputs: currentInputs };
     }
     if (answer === 'a' || answer === 'abort' || answer === 'stop') {
+      choose('abort');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'abort', ...summary });
       return { action: 'abort', inputs: currentInputs };
     }
     if (answer === 'i' || answer === 'inspect') {
+      choose('inspect');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'inspect-prompt', ...summary });
       logDebugPromptPreview({
         systemPrompt: summary.systemPrompt,
@@ -516,8 +554,14 @@ export async function promptDebugStepDecision({
       continue;
     }
     if (answer === 'e' || answer === 'edit') {
+      const beforeEdit = new Set(editedInputs);
+      choose('edit');
       pushDebugEvent(debugEvents, { step: step.agent, phase: 'pre-step', action: 'open-edit-inputs', ...summary });
       currentInputs = await editDebugInputs({ resolvedInputs: currentInputs, shell, timeline, step, debugEvents, editedInputs });
+      const newlyEdited = [...editedInputs].filter((name) => !beforeEdit.has(name));
+      if (newlyEdited.length) {
+        choose('edit', `(${newlyEdited.join(', ')} edited)`);
+      }
       logDebugInputs(currentInputs, timeline);
       if (editedInputs.size) {
         const inspectAnswer = shell

@@ -44,6 +44,10 @@ import {
 import {
   runStepAttempt,
 } from './executor/step-runner.js';
+import {
+  renderRunSummary,
+  writeRunManifest,
+} from './executor/run-report.js';
 
 export { detectSnapshotChanges } from './executor/snapshot-manager.js';
 export { validatePostRunChanges } from './executor/step-runner.js';
@@ -77,6 +81,7 @@ function createSilentTimeline() {
     logMuted() {},
     logSuccess() {},
     logError() {},
+    logDiffLine() {},
     setRunning() {},
     setPaused() {},
     setDone() {},
@@ -113,134 +118,8 @@ function printVerboseBlock(label, content, colorFn = (s) => s) {
   console.log(bar + '\n');
 }
 
-function visibleLength(s) {
-  return String(s || '').replace(/\{[^}]+\}/g, '').length;
-}
-
 function stripBlessedTags(s) {
   return String(s || '').replace(/\{[^}]+\}/g, '');
-}
-
-function padVisible(s, width, align = 'left') {
-  const str = String(s ?? '');
-  const pad = Math.max(0, width - visibleLength(str));
-  return align === 'right' ? `${' '.repeat(pad)}${str}` : `${str}${' '.repeat(pad)}`;
-}
-
-function formatSeconds(value) {
-  return `${Number(value || 0).toFixed(1)}s`;
-}
-
-function formatCost(value) {
-  return value > 0 ? `$${value.toFixed(4)}` : '—';
-}
-
-function formatTurns(value) {
-  return value > 0 ? String(value) : '—';
-}
-
-function formatPolicyLabel({ securityProfile, permissionMode }) {
-  const policy = securityProfile || '—';
-  return permissionMode && permissionMode !== '—' ? `${policy} · perm:${permissionMode}` : policy;
-}
-
-function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = null }) {
-  const totalSeconds = stats.reduce((sum, s) => sum + (s.seconds || 0), 0);
-  const totalCost = stats.reduce((sum, s) => sum + (s.cost || 0), 0);
-  const totalTurns = stats.reduce((sum, s) => sum + (s.turns || 0), 0);
-
-  const rows = stats.map((s, i) => ({
-    step: String(i + 1),
-    agent: s.agent,
-    provider: s.provider || '—',
-    model: s.model || '—',
-    policy: formatPolicyLabel({ securityProfile: s.securityProfile, permissionMode: s.permissionMode }),
-    status: s.status,
-    attempts: s.attempts && s.attempts > 1 ? String(s.attempts) : '—',
-    time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
-    turns: formatTurns(s.turns),
-    cost: formatCost(s.cost),
-  }));
-
-  const totalRow = {
-    step: '',
-    agent: 'TOTAL',
-    provider: '—',
-    model: '—',
-    policy: '—',
-    status: runStatus || (dryRun ? 'dry-run' : 'done'),
-    attempts: '—',
-    time: formatSeconds(totalSeconds),
-    turns: formatTurns(totalTurns),
-    cost: formatCost(totalCost),
-  };
-
-  const allRows = [...rows, totalRow];
-  const widths = {
-    step: Math.max(1, ...allRows.map((r) => visibleLength(r.step))),
-    agent: Math.max(5, ...allRows.map((r) => visibleLength(r.agent))),
-    provider: Math.max(8, ...allRows.map((r) => visibleLength(r.provider))),
-    model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
-    policy: Math.max(6, ...allRows.map((r) => visibleLength(r.policy))),
-    status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
-    attempts: Math.max(8, ...allRows.map((r) => visibleLength(r.attempts))),
-    time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
-    turns: Math.max(5, ...allRows.map((r) => visibleLength(r.turns))),
-    cost: Math.max(4, ...allRows.map((r) => visibleLength(r.cost))),
-  };
-
-  const hr = [
-    '─'.repeat(widths.step + 2),
-    '─'.repeat(widths.agent + 2),
-    '─'.repeat(widths.provider + 2),
-    '─'.repeat(widths.model + 2),
-    '─'.repeat(widths.policy + 2),
-    '─'.repeat(widths.status + 2),
-    '─'.repeat(widths.attempts + 2),
-    '─'.repeat(widths.time + 2),
-    '─'.repeat(widths.turns + 2),
-    '─'.repeat(widths.cost + 2),
-  ].join('┼');
-
-  function row(r) {
-    return [
-      ` ${padVisible(r.step, widths.step, 'right')} `,
-      ` ${padVisible(r.agent, widths.agent)} `,
-      ` ${padVisible(r.provider, widths.provider)} `,
-      ` ${padVisible(r.model, widths.model)} `,
-      ` ${padVisible(r.policy, widths.policy)} `,
-      ` ${padVisible(r.status, widths.status)} `,
-      ` ${padVisible(r.attempts, widths.attempts, 'right')} `,
-      ` ${padVisible(r.time, widths.time, 'right')} `,
-      ` ${padVisible(r.turns, widths.turns, 'right')} `,
-      ` ${padVisible(r.cost, widths.cost, 'right')} `,
-    ].join('│');
-  }
-
-  const lines = [
-    '',
-    '{bold}Summary{/}',
-    '',
-    row({ step: '#', agent: 'Agent', provider: 'Provider', model: 'Model', policy: 'Policy', status: 'Status', attempts: 'Attempts', time: 'Time', turns: 'Turns', cost: 'Cost' }),
-    hr,
-    ...rows.map(row),
-    hr,
-    row(totalRow),
-    '',
-  ];
-
-  if (runDir) {
-    lines.push(`Run: {${S.string}-fg}${path.relative(cwd, runDir)}{/}`);
-  }
-
-  if (fileWrites.length) {
-    lines.push('', '{bold}Generated{/}');
-    for (const f of fileWrites) lines.push(`  {${S.subtle}-fg}·{/} {${S.string}-fg}${f}{/}`);
-  } else {
-    lines.push('', `{${S.muted}-fg}No files generated.{/}`);
-  }
-
-  return lines;
 }
 
 async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = {}) {
@@ -278,7 +157,7 @@ async function logViolationDiffPreviews({ violations, cwd, timeline }) {
   for (const violation of shown) {
     timeline.log(`── diff ${violation.path} ──`);
     const preview = await getViolationDiffPreview(cwd, violation.path);
-    for (const line of preview) timeline.logMuted(line);
+    for (const line of preview) timeline.logDiffLine(line);
   }
   if (violations.length > maxFiles) {
     timeline.logMuted(`... ${violations.length - maxFiles} more violated file(s) not shown`);
@@ -331,59 +210,6 @@ async function handlePostRunViolations({ violations, step, securityPolicy, timel
   }
 }
 
-async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [], status = 'done', error = null, debugEvents = [] }) {
-  if (!runDir) return;
-
-  const uniqueWrites = [];
-  const seen = new Set();
-  for (const entry of [...fileWrites, ...detectedDeliverables]) {
-    if (seen.has(entry.absPath)) continue;
-    seen.add(entry.absPath);
-    uniqueWrites.push(entry);
-  }
-
-  const deliverables = uniqueWrites.filter((entry) => entry.kind === 'deliverable');
-  const intermediates = uniqueWrites.filter((entry) => entry.kind === 'intermediate');
-
-  const manifest = {
-    runId,
-    pipeline: pipeline.name,
-    projectRoot: cwd,
-    createdAt: new Date().toISOString(),
-    status,
-    error: error ? {
-      message: error.message,
-    } : null,
-    deliverables: deliverables.map((entry) => ({
-      path: entry.relPath,
-      absPath: entry.absPath,
-    })),
-    intermediates: intermediates.map((entry) => ({
-      path: entry.relPath,
-      absPath: entry.absPath,
-    })),
-    stats: stats.map((s) => ({
-      agent: s.agent,
-      provider: s.provider,
-      model: s.model,
-      runnerAgent: s.runnerAgent,
-      securityProfile: s.securityProfile,
-      permissionMode: s.permissionMode,
-      status: s.status,
-      seconds: s.seconds,
-      turns: s.turns,
-      cost: s.cost,
-      attempts: s.attempts || 1,
-      outputWarnings: s.outputWarnings || [],
-      parsedOutputs: s.parsedOutputs || [],
-      rawOutputPath: s.rawOutputPath || null,
-    })),
-    debugEvents,
-  };
-
-  await fs.writeFile(path.join(runDir, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
-}
-
 export async function runPipeline(filePath, opts = {}) {
   const abs = path.resolve(filePath);
   const pipeline = await loadPipeline(abs);
@@ -420,22 +246,20 @@ export async function runPipeline(filePath, opts = {}) {
     if (runInfo) shell.log(`  {${S.muted}-fg}${runInfo}{/}`);
     if (dryRun) shell.log(`{yellow-fg}  [dry-run] no CLI calls will be made{/}`);
     if (debug) shell.log(`{yellow-fg}  [debug] pausing before each step{/}`);
-    shell.setMode?.(debug ? 'debug' : 'running');
+    shell.setMode?.('running');
   }
 
   const inputDefs = (pipeline.nodes || [])
     .filter((n) => n.type === 'input')
     .map((n) => ({ id: n.id, subtype: n.data?.subtype || 'text', label: n.data?.label || n.id, value: n.data?.value || '' }));
 
-  const runBorderMode = debug ? 'debug' : 'running';
+  // shell.prompt now auto-toggles the cadre to 'awaiting' (orange) for any prompt,
+  // so we only need to manage the pipeline label override here (input collection runs
+  // before enterPipelineMode, so label changes are no-ops then — they apply once we're inside).
   const promptFn = shell ? async (msg) => {
-    shell.setMode?.('awaiting');
     shell.setPipelineLabel?.('input waiting');
     try { return await shell.prompt(msg); }
-    finally {
-      shell.setMode?.(runBorderMode);
-      shell.clearPipelineLabel?.();
-    }
+    finally { shell.clearPipelineLabel?.(); }
   } : null;
   const inputValues = await collectInputValues(pipeline, dryRun, { promptFn, style });
 
@@ -911,6 +735,8 @@ export async function runPipeline(filePath, opts = {}) {
           timeline.setPaused(timelineIndex, 'output review');
           const postDecision = await promptDebugPostStepDecision({
             step,
+            stepNumber: i + 1,
+            totalSteps: pipeline.steps.length,
             parsed,
             outputNames,
             stepWrites: attemptWrites,
@@ -1073,9 +899,15 @@ export async function runPipeline(filePath, opts = {}) {
   })) out(line);
   if (runError) {
     shell?.setMode?.('error');
-    out(`{${S.error}-fg}✕ pipeline failed{/}`);
+    // One-line outcome banner: bold red marker + reason inline (instead of two stacked × lines).
+    const reason = String(runError.message || 'unknown error').split('\n')[0];
+    out(`{${S.error}-fg}{bold}✕ Pipeline failed{/}{${S.muted}-fg}  —  {/}{${S.error}-fg}${reason}{/}`);
+    out('');
     throw runError;
   }
   shell?.setMode?.(null);
-  out(dryRun ? `{${S.success}-fg}✓ dry-run complete{/}` : `{${S.success}-fg}✓ pipeline complete{/}`);
+  out(dryRun
+    ? `{${S.success}-fg}{bold}✓ Dry-run complete{/}`
+    : `{${S.success}-fg}{bold}✓ Pipeline complete{/}`);
+  out('');
 }

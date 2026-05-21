@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { createShell, C } from '../shell.js';
+import { createShell, S } from '../shell.js';
 import { scanAgents } from '../scanner.js';
 import { runPipeline } from '../executor.js';
 import { newAgentShellCommand } from './new.js';
@@ -13,18 +15,18 @@ const HELP = [
   '',
   `{bold}Commands{/}`,
   '',
-  `  {${C.violet}-fg}/run <name>{/}               run a pipeline`,
-  `  {${C.violet}-fg}/run <name> --dry{/}         dry-run (plan without API calls)`,
-  `  {${C.violet}-fg}/run <name> --verbose{/}     show prompts and outputs`,
-  `  {${C.violet}-fg}/run <name> --debug{/}       pause before each step`,
-  `  {${C.blue}-fg}/scan{/}                     scan .md agents`,
-  `  {${C.blue}-fg}/new{/}                      create a new agent`,
-  `  {${C.blue}-fg}/serve{/}                    start the web server`,
-  `  {${C.blue}-fg}/stop{/}                     stop the web server`,
-  `  {${C.blue}-fg}/commit-last{/}              commit deliverables from the last run`,
-  `  {${C.pink}-fg}/ls{/}                       list pipelines`,
-  `  {${C.pink}-fg}/help{/}                     show help`,
-  `  {${C.pink}-fg}/quit{/}                     quit  {${C.dimV}-fg}(or Ctrl+C){/}`,
+  `  {${S.accent}-fg}{bold}/run <name>{/}               run a pipeline`,
+  `  {${S.accent}-fg}{bold}/run <name> --dry{/}         dry-run (plan without API calls)`,
+  `  {${S.accent}-fg}{bold}/run <name> --verbose{/}     show prompts and outputs`,
+  `  {${S.accent}-fg}{bold}/run <name> --debug{/}       pause before each step`,
+  `  {${S.accent}-fg}{bold}/scan{/}                     scan .md agents`,
+  `  {${S.accent}-fg}{bold}/new{/}                      create a new agent`,
+  `  {${S.accent}-fg}{bold}/serve{/}                    start the web server`,
+  `  {${S.accent}-fg}{bold}/stop{/}                     stop the web server`,
+  `  {${S.accent}-fg}{bold}/commit-last{/}              commit deliverables from the last run`,
+  `  {${S.accent}-fg}{bold}/ls{/}                       list pipelines`,
+  `  {${S.accent}-fg}{bold}/help{/}                     show help`,
+  `  {${S.accent}-fg}{bold}/quit{/}                     quit  {${S.muted}-fg}(or Ctrl+C){/}`,
   '',
 ].join('\n');
 
@@ -179,30 +181,22 @@ async function countAgents(root) {
   } catch { return 0; }
 }
 
-// Violet → peach gradient (4 interpolated steps)
-const SINGLETON_GRAD = ['#C084FC', '#D499E8', '#EBB0D8', '#F9A8D4'];
-
-// Gradient by column position so all rows share the same color mapping
-function gradientLine(text, totalWidth, colors = SINGLETON_GRAD) {
-  return text.split('').map((ch, i) => {
-    if (ch === ' ') return ch;
-    const color = colors[Math.min(Math.floor((i / totalWidth) * colors.length), colors.length - 1)];
-    return `{${color}-fg}${ch}{/}`;
-  }).join('');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(__dirname, '..', 'assets', 'singleton-logo.txt');
+function loadLogoLines() {
+  try {
+    const raw = fsSync.readFileSync(LOGO_PATH, 'utf8');
+    return raw
+      .replace(/\x1b\[\?25[lh]/g, '')
+      .split('\n')
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
 }
 
-function plainBrightLine(text) {
-  return text.split('').map((ch) => (ch === ' ' ? ch : `{#FFFFFF-fg}${ch}{/}`)).join('');
-}
-
-const SINGLETON_RAW = [
-  '▄█████ ▄▄ ▄▄  ▄▄  ▄▄▄▄ ▄▄    ▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄  ▄▄ ',
-  '▀▀▀▄▄▄ ██ ███▄██ ██ ▄▄ ██     ▄▄██   ██  ██▀██ ███▄██ ',
-  '█████▀ ██ ██ ▀██ ▀███▀ ██▄▄▄ ▄▄▄██   ██  ▀███▀ ██ ▀██ ',
-];
-
-const ART_WIDTH = Math.max(...SINGLETON_RAW.map((l) => l.length));
-const APP_VERSION = 'v0.4.0-beta.11';
+const SINGLETON_LOGO = loadLogoLines();
+const APP_VERSION = 'v0.4.0-beta.12';
 
 async function showWelcome(root, shell) {
   const now     = new Date();
@@ -220,27 +214,27 @@ async function showWelcome(root, shell) {
   const headerLines = [
     '',
     ' '.repeat(tw('Welcome back')),
-    `${dateStr}  ${timeStr}  {${C.ghost}-fg}${APP_VERSION}{/}`,
+    `${dateStr}  ${timeStr}  {${S.muted}-fg}${APP_VERSION}{/}`,
     '',
     `${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''}`,
     `${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
     '',
-    `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}you can now debug pipeline runs{/}`,
-    `{${C.ghost}-fg}·{/} {${C.mint}-fg}pause steps{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}inspect prompts{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}edit inputs{/}  {${C.ghost}-fg}·{/} {${C.violet}-fg}review diffs{/}`,
-    `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}Copilot runner support{/}`,
-    `{${C.ghost}-fg}·{/} {${C.mint}-fg}provider copilot{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}runner_agent optional{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}native tool permissions{/}`,
-    `{${C.peach}-fg}{bold}New{/} {#FFFFFF-fg}experimental OpenCode runner support{/}`,
-    `{${C.ghost}-fg}·{/} {${C.mint}-fg}provider opencode{/}  {${C.ghost}-fg}·{/} {${C.blue}-fg}runner_agent optional{/}  {${C.ghost}-fg}·{/} {${C.peach}-fg}post-run security{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}you can now debug pipeline runs{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}pause steps{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}inspect prompts{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}edit inputs{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}review diffs{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}Copilot runner support{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}provider copilot{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}runner_agent optional{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}native tool permissions{/}`,
+    `{${S.warning}-fg}{bold}New{/} {${S.text}-fg}experimental OpenCode runner support{/}`,
+    `{${S.subtle}-fg}·{/} {${S.keyword}-fg}provider opencode{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}runner_agent optional{/}  {${S.subtle}-fg}·{/} {${S.keyword}-fg}post-run security{/}`,
     '',
   ];
   const TAGLINE  = 'one to rule them all';
   const CREDIT = 'Developed by Romain LENTZ';
-  const bottomBlockHeight = 3 + SINGLETON_RAW.length;
+  const bottomBlockHeight = 3 + SINGLETON_LOGO.length;
   const spacerLines = Math.max(0, contentHeight - headerLines.length - bottomBlockHeight);
 
   // Track shimmer positions.
   const welcomeRow = CONTENT_PAD_TOP + 2;
-  const creditRow = CONTENT_PAD_TOP + headerLines.length + spacerLines;
+  const creditRow = CONTENT_PAD_TOP + headerLines.length + spacerLines + SINGLETON_LOGO.length;
   const taglineRow = creditRow + 1;
 
   for (const line of headerLines) {
@@ -250,12 +244,13 @@ async function showWelcome(root, shell) {
     shell.log('');
   }
 
-  shell.log(`{${C.dimV}-fg}${CREDIT}{/}`);
+  for (const logoLine of SINGLETON_LOGO) {
+    shell.log(logoLine);
+  }
+
+  shell.log(`{${S.muted}-fg}${CREDIT}{/}`);
   shell.log(' '.repeat(TAGLINE.length));
   shell.log('');
-  for (const line of SINGLETON_RAW) {
-    shell.log(plainBrightLine(line));
-  }
 
   const stopWelcome = shell.createShimmer('Welcome back', welcomeRow, CONTENT_PAD_LEFT);
   const stopTagline = shell.createShimmer(TAGLINE, taglineRow, CONTENT_PAD_LEFT);
@@ -318,14 +313,16 @@ export async function replCommand(opts) {
             await closeServer(serveState.server);
             serveState.clear();
           }
-          shell.log('{#676498-fg}See you soon.{/}');
+          shell.log(`{${S.muted}-fg}See you soon.{/}`);
           setTimeout(() => { shell.destroy(); process.exit(0); }, 300);
           return;
         default:
-          shell.log(`{${C.peach}-fg}!{/} Unknown command: {bold}${cmd}{/}  — type /help`);
+          shell.log(`{${S.warning}-fg}!{/} Unknown command: {bold}${cmd}{/}  — type /help`);
       }
     } catch (err) {
-      shell.log(`{${C.salmon}-fg}✕{/} ${err.message}`);
+      // Safety: if a command (typically /run) threw before resetting the border, reflect the error.
+      shell.setMode?.('error');
+      shell.log(`{${S.error}-fg}✕{/} ${err.message}`);
     }
     shell.enableInput();
   });
@@ -340,19 +337,19 @@ async function cmdRun(args, root, shell) {
   if (!name) {
     const pipelines = await listPipelines(root);
     if (pipelines.length === 0) {
-      shell.log(`{${C.peach}-fg}!{/} No pipelines found.`);
+      shell.log(`{${S.warning}-fg}!{/} No pipelines found.`);
       return;
     }
-    shell.log(`{${C.dimV}-fg}  Pipelines: ${pipelines.join(', ')}{/}`);
-    shell.log(`{${C.dimV}-fg}  Usage: /run <name> [--dry] [--verbose] [--debug]{/}`);
+    shell.log(`{${S.muted}-fg}  Pipelines: ${pipelines.join(', ')}{/}`);
+    shell.log(`{${S.muted}-fg}  Usage: /run <name> [--dry] [--verbose] [--debug]{/}`);
     return;
   }
 
   const filePath = await resolvePipelinePath(name, root);
   if (!filePath) {
-    shell.log(`{${C.salmon}-fg}✕{/} Pipeline "{bold}${name}{/}" not found.`);
+    shell.log(`{${S.error}-fg}✕{/} Pipeline "{bold}${name}{/}" not found.`);
     const pipelines = await listPipelines(root);
-    if (pipelines.length) shell.log(`{${C.dimV}-fg}  Available: ${pipelines.join(', ')}{/}`);
+    if (pipelines.length) shell.log(`{${S.muted}-fg}  Available: ${pipelines.join(', ')}{/}`);
     return;
   }
 
@@ -362,12 +359,12 @@ async function cmdRun(args, root, shell) {
 async function cmdLs(root, shell) {
   const pipelines = await listPipelines(root);
   if (pipelines.length === 0) {
-    shell.log('{yellow-fg}!{/} No pipelines found.');
+    shell.log(`{${S.warning}-fg}!{/} No pipelines found.`);
     return;
   }
   shell.log(`{bold}Pipelines (${pipelines.length}){/}`);
   shell.log('');
-  for (const p of pipelines) shell.log(`  {${C.dimV}-fg}·{/} {${C.pink}-fg}${p}{/}`);
+  for (const p of pipelines) shell.log(`  {${S.subtle}-fg}·{/} {${S.string}-fg}${p}{/}`);
   shell.log('');
 }
 
@@ -381,26 +378,26 @@ function groupAgentsByProvider(agents) {
 }
 
 async function cmdScan(root, shell) {
-  shell.log(`{${C.dimV}-fg}Scanning ${root}…{/}`);
+  shell.log(`{${S.muted}-fg}Scanning ${root}…{/}`);
   const agents = await scanAgents(root);
   if (agents.length === 0) {
-    shell.log(`{${C.peach}-fg}!{/} No agents found (no .md files with ## Config).`);
+    shell.log(`{${S.warning}-fg}!{/} No agents found (no .md files with ## Config).`);
     return;
   }
   shell.log(`{bold}Agents (${agents.length}){/}`);
   shell.log('');
   const groups = groupAgentsByProvider(agents);
   [...groups.entries()].forEach(([provider, providerAgents]) => {
-    shell.log(`  {${C.dimV}-fg}════════════════════════════════════════{/}`);
-    shell.log(`  {bold}${provider}{/} {${C.dimV}-fg}(${providerAgents.length}){/}`);
-    shell.log(`  {${C.dimV}-fg}════════════════════════════════════════{/}`);
+    shell.log(`  {${S.muted}-fg}════════════════════════════════════════{/}`);
+    shell.log(`  {bold}${provider}{/} {${S.muted}-fg}(${providerAgents.length}){/}`);
+    shell.log(`  {${S.muted}-fg}════════════════════════════════════════{/}`);
     shell.log('');
 
     providerAgents.forEach((a, index) => {
-      shell.log(`    {${C.violet}-fg}{bold}${a.id}{/}  {${C.dimV}-fg}${a.description || '(no description)'}{/}`);
-      shell.log(`    {${C.blue}-fg}{bold}source{/}: {${C.dimV}-fg}${a.source || 'repo'}{/}${a.permission_mode ? `   {${C.peach}-fg}{bold}permission{/}: {${C.dimV}-fg}${a.permission_mode}{/}` : ''}`);
-      shell.log(`    {${C.mint}-fg}{bold}in{/}: {${C.dimV}-fg}${a.inputs.join(', ') || '—'}{/}   {${C.pink}-fg}{bold}out{/}: {${C.dimV}-fg}${a.outputs.join(', ') || '—'}{/}`);
-      if (index < providerAgents.length - 1) shell.log(`    {${C.dimV}-fg}──────────────────────────────────────{/}`);
+      shell.log(`    {${S.accent}-fg}{bold}${a.id}{/}  {${S.muted}-fg}${a.description || '(no description)'}{/}`);
+      shell.log(`    {${S.keyword}-fg}{bold}source{/}: {${S.text}-fg}${a.source || 'repo'}{/}${a.permission_mode ? `   {${S.keyword}-fg}{bold}permission{/}: {${S.text}-fg}${a.permission_mode}{/}` : ''}`);
+      shell.log(`    {${S.keyword}-fg}{bold}in{/}: {${S.text}-fg}${a.inputs.join(', ') || '—'}{/}   {${S.keyword}-fg}{bold}out{/}: {${S.text}-fg}${a.outputs.join(', ') || '—'}{/}`);
+      if (index < providerAgents.length - 1) shell.log(`    {${S.muted}-fg}──────────────────────────────────────{/}`);
     });
     shell.log('');
   });
@@ -408,7 +405,7 @@ async function cmdScan(root, shell) {
   await fs.mkdir(path.dirname(outPath), { recursive: true });
   await fs.writeFile(outPath, JSON.stringify({ scannedAt: new Date().toISOString(), root, agents }, null, 2));
   shell.log('');
-  shell.log(`{${C.mint}-fg}✓{/} Cache → .singleton/agents.json`);
+  shell.log(`{${S.success}-fg}✓{/} Cache → {${S.string}-fg}.singleton/agents.json{/}`);
 }
 
 async function cmdNew(root, shell) {
@@ -429,12 +426,12 @@ function closeServer(server) {
 
 async function cmdServe(root, shell, serveState) {
   if (serveState.server) {
-    shell.log(`{${C.peach}-fg}!{/} The server is already running on {${C.blue}-fg}${serveState.url}{/}.`);
+    shell.log(`{${S.warning}-fg}!{/} The server is already running on {${S.string}-fg}${serveState.url}{/}.`);
     return;
   }
   const { startServer } = await import('../../../server/src/index.js');
   const serverUrl = 'http://localhost:4317';
-  shell.log('{#676498-fg}Starting server… (/stop to stop){/}');
+  shell.log(`{${S.muted}-fg}Starting server… (/stop to stop){/}`);
   shell.enableInput();
   const server = await startServer({
     port: 4317,
@@ -445,10 +442,10 @@ async function cmdServe(root, shell, serveState) {
         const url = urlMatch[0];
         const prefix = message.slice(0, urlMatch.index);
         const suffix = message.slice(urlMatch.index + url.length);
-        shell.log(`{#FFFFFF-fg}{bold}${prefix}{/}{${C.blue}-fg}${url}{/}{${C.dimV}-fg}${suffix}{/}`);
+        shell.log(`{${S.text}-fg}{bold}${prefix}{/}{${S.string}-fg}${url}{/}{${S.muted}-fg}${suffix}{/}`);
         return;
       }
-      shell.log(`{${C.dimV}-fg}${message}{/}`);
+      shell.log(`{${S.muted}-fg}${message}{/}`);
     },
   });
   serveState.server = server;
@@ -456,16 +453,16 @@ async function cmdServe(root, shell, serveState) {
   server.on('close', () => {
     const shouldLog = !serveState.suppressCloseLog;
     serveState.clear();
-    if (shouldLog) shell.log(`{${C.dimV}-fg}Serve stopped.{/}`);
+    if (shouldLog) shell.log(`{${S.muted}-fg}Serve stopped.{/}`);
   });
   shell.setFooterCenter(
-    `{${C.dimV}-fg}serve running{/} {${C.blue}-fg}${serverUrl}{/}`
+    `{${S.muted}-fg}serve running{/} {${S.string}-fg}${serverUrl}{/}`
   );
 }
 
 async function cmdStop(shell, serveState) {
   if (!serveState.server) {
-    shell.log(`{${C.peach}-fg}!{/} No running server.`);
+    shell.log(`{${S.warning}-fg}!{/} No running server.`);
     return;
   }
   const url = serveState.url;
@@ -475,7 +472,7 @@ async function cmdStop(shell, serveState) {
   serveState.url = '';
   shell.setFooterCenter('');
   await closeServer(server);
-  shell.log(`{${C.mint}-fg}✓{/} Serve stopped {${C.dimV}-fg}${url}{/}`);
+  shell.log(`{${S.success}-fg}✓{/} Serve stopped {${S.string}-fg}${url}{/}`);
 }
 
 async function cmdCommitLast(root, shell) {
@@ -483,7 +480,7 @@ async function cmdCommitLast(root, shell) {
   try {
     manifest = await loadLastRunManifest(root);
   } catch {
-    shell.log(`{${C.peach}-fg}!{/} No usable latest run found in .singleton/runs/latest.`);
+    shell.log(`{${S.warning}-fg}!{/} No usable latest run found in .singleton/runs/latest.`);
     return;
   }
 
@@ -491,7 +488,7 @@ async function cmdCommitLast(root, shell) {
   try {
     securityConfig = await loadProjectSecurityConfig(root);
   } catch (err) {
-    shell.log(`{${C.salmon}-fg}✕{/} ${err.message}`);
+    shell.log(`{${S.error}-fg}✕{/} ${err.message}`);
     return;
   }
 
@@ -505,9 +502,9 @@ async function cmdCommitLast(root, shell) {
     return true;
   });
   if (files.length === 0) {
-    shell.log(`{${C.peach}-fg}!{/} The last run produced no deliverables to commit.`);
+    shell.log(`{${S.warning}-fg}!{/} The last run produced no deliverables to commit.`);
     if (excluded.length) {
-      shell.log(`{${C.dimV}-fg}All deliverables were excluded by .singleton/security.json commit rules.{/}`);
+      shell.log(`{${S.muted}-fg}All deliverables were excluded by .singleton/security.json commit rules.{/}`);
     }
     return;
   }
@@ -515,27 +512,27 @@ async function cmdCommitLast(root, shell) {
   try {
     await runCommand('git', ['rev-parse', '--show-toplevel'], { cwd: root });
   } catch {
-    shell.log(`{${C.salmon}-fg}✕{/} This project is not inside a Git repository.`);
+    shell.log(`{${S.error}-fg}✕{/} This project is not inside a Git repository.`);
     return;
   }
 
-  shell.log(`{bold}Commit last preview{/}  {${C.dimV}-fg}${manifest.pipeline || 'unknown pipeline'}{/}`);
+  shell.log(`{bold}Commit last preview{/}  {${S.muted}-fg}${manifest.pipeline || 'unknown pipeline'}{/}`);
   shell.log('');
-  shell.log(`{${C.blue}-fg}Files to stage{/}`);
-  for (const file of files) shell.log(`  {${C.dimV}-fg}·{/} ${file.path}`);
+  shell.log(`{${S.keyword}-fg}Files to stage{/}`);
+  for (const file of files) shell.log(`  {${S.subtle}-fg}·{/} {${S.string}-fg}${file.path}{/}`);
   if (excluded.length) {
     shell.log('');
-    shell.log(`{${C.peach}-fg}Excluded by security config{/}`);
-    for (const { file, excludedBy } of excluded) shell.log(`  {${C.dimV}-fg}·{/} ${file.path} {${C.dimV}-fg}(${excludedBy}){/}`);
+    shell.log(`{${S.warning}-fg}Excluded by security config{/}`);
+    for (const { file, excludedBy } of excluded) shell.log(`  {${S.subtle}-fg}·{/} {${S.string}-fg}${file.path}{/} {${S.muted}-fg}(${excludedBy}){/}`);
   }
   shell.log('');
-  shell.log(`{${C.dimV}-fg}.singleton artifacts are not committed by /commit-last.{/}`);
+  shell.log(`{${S.muted}-fg}.singleton artifacts are not committed by /commit-last.{/}`);
   shell.log('');
 
   if (securityConfig.commit.requireConfirmation) {
     const confirmation = (await shell.prompt('Stage and commit these files? (y/N)')).trim().toLowerCase();
     if (confirmation !== 'y' && confirmation !== 'yes') {
-      shell.log(`{${C.peach}-fg}!{/} Commit cancelled.`);
+      shell.log(`{${S.warning}-fg}!{/} Commit cancelled.`);
       return;
     }
   }
@@ -547,5 +544,5 @@ async function cmdCommitLast(root, shell) {
   await runCommand('git', ['add', '--', ...relFiles], { cwd: root });
   await runCommand('git', ['commit', '-m', message], { cwd: root });
 
-  shell.log(`{${C.mint}-fg}✓{/} Commit created: {${C.dimV}-fg}${message}{/}`);
+  shell.log(`{${S.success}-fg}✓{/} Commit created: {${S.string}-fg}${message}{/}`);
 }
