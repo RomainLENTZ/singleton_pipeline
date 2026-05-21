@@ -100,7 +100,7 @@ function logDebugSection(title, timeline) {
   const right = Math.max(0, width - text.length - left);
   timeline.logMuted(' ');
   timeline.logMuted(' ');
-  timeline.log(`{${S.subtle}-fg}${'─'.repeat(left)}{/}{${S.accent}-fg}{bold}${text}{/}{${S.subtle}-fg}${'─'.repeat(right)}{/}`);
+  timeline.log(`{${S.subtle}-fg}${'─'.repeat(left)}{/}{${S.keyword}-fg}{bold}${text}{/}{${S.subtle}-fg}${'─'.repeat(right)}{/}`);
   timeline.logMuted(' ');
   timeline.logMuted(' ');
 }
@@ -313,7 +313,7 @@ export async function promptDebugPostStepDecision({
     return 'continue';
   }
 
-  logDebugSection('Debug output review', timeline);
+  logDebugSection(`Debug output review · Step ${stepNumber}/${totalSteps}`, timeline);
   timeline.logMuted(debugLine('agent', step.agent, 'identity'));
   timeline.logMuted(`${debugToken.key('outputs')} ${formatDebugList(outputNames)}`);
   timeline.logMuted(`${debugToken.key('written files')} ${formatDebugList(stepWrites.map((entry) => entry.relPath))}`);
@@ -503,8 +503,7 @@ export async function promptDebugStepDecision({
   let currentInputs = { ...resolvedInputs };
   const editedInputs = new Set();
 
-  logDebugSection('Debug step review', timeline);
-  timeline.logMuted(debugLine('step', `${stepNumber}/${totalSteps}`));
+  logDebugSection(`Debug step review · Step ${stepNumber}/${totalSteps}`, timeline);
   timeline.logMuted(debugLine('agent', step.agent, 'identity'));
   timeline.logMuted(debugLine('provider', provider, 'identity'));
   timeline.logMuted(debugLine('model', model || '—', 'identity'));

@@ -24,7 +24,8 @@ function formatTurns(value) {
   return value > 0 ? String(value) : '—';
 }
 
-// Status → color. Used to color the Status column in the summary table.
+// Status → color. Only the Status cell is coloured; the rest of the row stays white
+// so the outcome is scannable without being noisy.
 function statusColor(status) {
   if (status === 'done')    return S.success;
   if (status === 'failed')  return S.error;
@@ -91,38 +92,42 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
     '─'.repeat(widths.cost + 2),
   ].join(`{${S.subtle}-fg}┼{/}`);
 
-  function row(r, { color = false } = {}) {
-    const statusCell = color
-      ? `{${statusColor(r.status)}-fg}${padVisible(r.status, widths.status)}{/}`
-      : padVisible(r.status, widths.status);
+  // Bold each cell individually because `{/}` from the separator would reset a row-level bold.
+  function row(r, { bold = false, colorStatus = false } = {}) {
+    const b = bold ? '{bold}' : '';
+    const bClose = bold ? '{/}' : '';
+    const statusPadded = padVisible(r.status, widths.status);
+    const statusCell = colorStatus
+      ? `{${statusColor(r.status)}-fg}${b}${statusPadded}${bClose}{/}`
+      : `${b}${statusPadded}${bClose}`;
     return [
-      ` ${padVisible(r.step, widths.step, 'right')} `,
-      ` ${padVisible(r.agent, widths.agent)} `,
-      ` ${padVisible(r.model, widths.model)} `,
+      ` ${b}${padVisible(r.step, widths.step, 'right')}${bClose} `,
+      ` ${b}${padVisible(r.agent, widths.agent)}${bClose} `,
+      ` ${b}${padVisible(r.model, widths.model)}${bClose} `,
       ` ${statusCell} `,
-      ` ${padVisible(r.time, widths.time, 'right')} `,
-      ` ${padVisible(r.cost, widths.cost, 'right')} `,
+      ` ${b}${padVisible(r.time, widths.time, 'right')}${bClose} `,
+      ` ${b}${padVisible(r.cost, widths.cost, 'right')}${bClose} `,
     ].join(`{${S.subtle}-fg}│{/}`);
   }
 
   const lines = [
     ...sectionHeader('Run summary'),
-    `{${S.muted}-fg}${row({ step: '#', agent: 'Agent', model: 'Model', status: 'Status', time: 'Time', cost: 'Cost' })}{/}`,
+    row({ step: '#', agent: 'Agent', model: 'Model', status: 'Status', time: 'Time', cost: 'Cost' }, { bold: true }),
     `{${S.subtle}-fg}${hr}{/}`,
-    ...rows.map((r) => row(r, { color: true })),
+    ...rows.map((r) => row(r, { colorStatus: true })),
     `{${S.subtle}-fg}${hr}{/}`,
-    `{bold}${row(totalRow, { color: true })}{/}`,
+    row(totalRow, { bold: true, colorStatus: true }),
     '',
   ];
 
   if (runDir) {
-    lines.push(`  {${S.muted}-fg}Run{/}        {${S.string}-fg}${path.relative(cwd, runDir)}{/}`);
+    lines.push(`  {${S.muted}-fg}Run{/}        {${S.keyword}-fg}${path.relative(cwd, runDir)}{/}`);
   }
 
   if (fileWrites.length) {
-    lines.push(`  {${S.muted}-fg}Generated{/}  {${S.string}-fg}${fileWrites[0]}{/}`);
+    lines.push(`  {${S.muted}-fg}Generated{/}  {${S.keyword}-fg}${fileWrites[0]}{/}`);
     for (const f of fileWrites.slice(1)) {
-      lines.push(`             {${S.string}-fg}${f}{/}`);
+      lines.push(`             {${S.keyword}-fg}${f}{/}`);
     }
   }
   lines.push('');

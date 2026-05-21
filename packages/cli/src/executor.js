@@ -163,15 +163,6 @@ export async function runPipeline(filePath, opts = {}) {
         failStep(timeline, timelineIndex, 'no agent_file', `Step "${step.agent}" is missing agent_file.`);
       }
 
-      // Step banner — clear visual break between steps so the log doesn't blend into one wall.
-      const bannerText = ` Step ${i + 1}/${pipeline.steps.length} · ${step.agent} `;
-      const bannerWidth = 72;
-      const bannerSide = Math.max(0, Math.floor((bannerWidth - bannerText.length) / 2));
-      const bannerRest = Math.max(0, bannerWidth - bannerText.length - bannerSide);
-      timeline.logMuted(' ');
-      timeline.log(`{${S.subtle}-fg}${'═'.repeat(bannerSide)}{/}{${S.keyword}-fg}{bold}${bannerText}{/}{${S.subtle}-fg}${'═'.repeat(bannerRest)}{/}`);
-      timeline.logMuted(' ');
-
       const agentFilePath = path.isAbsolute(step.agent_file)
         ? step.agent_file
         : path.resolve(cwd, step.agent_file);
