@@ -1,9 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { style } from '../theme.js';
-import { createTimeline } from '../timeline.js';
-import { S } from '../shell.js';
+import { createPlainTimeline, createTimeline } from '../timeline.js';
+import { G, S } from '../shell.js';
 import { collectInputValues } from './inputs.js';
+
+export function isNonInteractiveRuntime({ shell = null, nonInteractive = null } = {}) {
+  if (shell) return false;
+  if (typeof nonInteractive === 'boolean') return nonInteractive;
+  return process.env.CI === 'true' || !process.stdout.isTTY;
+}
 
 export async function loadPipeline(filePath) {
   const raw = await fs.readFile(filePath, 'utf8');
@@ -50,12 +56,12 @@ export async function createRunWorkspace({ cwd, pipeline, dryRun, debug }) {
 export function logRunStart({ pipeline, cwd, runDir, dryRun, debug, shell, quiet }) {
   const runInfo = runDir ? `run: ${path.relative(cwd, runDir)}` : '';
   if (!shell && !quiet) {
-    console.log(style.title(`\n▸ ${pipeline.name}`) + style.muted(`  (${pipeline.steps.length} steps)`));
+    console.log(style.title(`\n${G.pointer} ${pipeline.name}`) + style.muted(`  (${pipeline.steps.length} steps)`));
     if (runInfo) console.log(style.muted(`  ${runInfo}`));
     if (dryRun) console.log(style.warn('  [dry-run] no CLI calls will be made'));
     if (debug) console.log(style.warn('  [debug] pausing before each step'));
   } else if (shell) {
-    shell.log(`{bold}▸ ${pipeline.name}{/}  {${S.muted}-fg}(${pipeline.steps.length} steps){/}`);
+    shell.log(`{bold}${G.pointer} ${pipeline.name}{/}  {${S.muted}-fg}(${pipeline.steps.length} steps){/}`);
     if (runInfo) shell.log(`  {${S.muted}-fg}${runInfo}{/}`);
     if (dryRun) shell.log(`{yellow-fg}  [dry-run] no CLI calls will be made{/}`);
     if (debug) shell.log(`{yellow-fg}  [debug] pausing before each step{/}`);
@@ -69,7 +75,7 @@ function getInputDefs(pipeline) {
     .map((n) => ({ id: n.id, subtype: n.data?.subtype || 'text', label: n.data?.label || n.id, value: n.data?.value || '' }));
 }
 
-export async function collectPipelineInputs({ pipeline, dryRun, shell }) {
+export async function collectPipelineInputs({ pipeline, dryRun, shell, nonInteractive = false, quiet = false }) {
   const inputDefs = getInputDefs(pipeline);
 
   // shell.prompt auto-toggles the frame to awaiting, so this only manages the label.
@@ -78,16 +84,19 @@ export async function collectPipelineInputs({ pipeline, dryRun, shell }) {
     try { return await shell.prompt(msg); }
     finally { shell.clearPipelineLabel?.(); }
   } : null;
-  const inputValues = await collectInputValues(pipeline, dryRun, { promptFn, style });
+  const inputValues = await collectInputValues(pipeline, dryRun, {
+    promptFn,
+    style: quiet ? null : style,
+    nonInteractive,
+  });
   return { inputDefs, inputValues };
 }
 
-export function createRunTimeline({ pipeline, quiet, shell }) {
+export function createRunTimeline({ pipeline, quiet, shell, nonInteractive = false }) {
   if (shell) shell.enterPipelineMode();
-  return quiet
-    ? createSilentTimeline()
-    : createTimeline(
-        ['preflight checks', ...pipeline.steps.map((s) => s.agent)],
-        shell ? shell.pipelineWidgets : null
-      );
+  if (quiet) return createSilentTimeline();
+  const stepNames = ['preflight checks', ...pipeline.steps.map((s) => s.agent)];
+  return nonInteractive && !shell
+    ? createPlainTimeline(stepNames)
+    : createTimeline(stepNames, shell ? shell.pipelineWidgets : null);
 }

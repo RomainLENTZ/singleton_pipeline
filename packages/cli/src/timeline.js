@@ -1,7 +1,52 @@
 import blessed from 'blessed';
-import { S } from './shell.js';
+import { ASCII_MODE, G, S } from './shell.js';
 
-const FRAMES = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
+const FRAMES = ASCII_MODE ? ['|', '/', '-', '\\'] : ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
+
+function stripBlessedTags(s) {
+  return String(s || '').replace(/\{[^}]+\}/g, '');
+}
+
+export function createPlainTimeline(stepNames, { log = console.log } = {}) {
+  const statuses = stepNames.map(() => 'pending');
+  const meta = stepNames.map(() => '');
+
+  function line(index, status, info = '') {
+    const label = stepNames[index] || `step ${index + 1}`;
+    const suffix = info ? ` - ${info}` : '';
+    return `[${status}] ${label}${suffix}`;
+  }
+
+  return {
+    log(text)        { log(stripBlessedTags(text)); },
+    logMuted(text)   { log(stripBlessedTags(text)); },
+    logSuccess(text) { log(stripBlessedTags(text)); },
+    logError(text)   { log(stripBlessedTags(text)); },
+    logDiffLine(raw) { log(String(raw ?? '')); },
+
+    setRunning(i, info = '') {
+      statuses[i] = 'running';
+      meta[i] = info;
+      log(line(i, 'running', info));
+    },
+    setPaused(i, info = '') {
+      statuses[i] = 'paused';
+      meta[i] = info;
+      log(line(i, 'paused', info));
+    },
+    setDone(i, info = '') {
+      statuses[i] = 'done';
+      meta[i] = info;
+      log(line(i, 'done', info));
+    },
+    setError(i, info = '') {
+      statuses[i] = 'error';
+      meta[i] = info;
+      log(line(i, 'error', info));
+    },
+    end() {},
+  };
+}
 
 // widgets: { screen, logPanel, statusBox } — provided by shell when running inside the TUI.
 // If omitted, a standalone blessed screen is created.
@@ -52,11 +97,11 @@ export function createTimeline(stepNames, widgets = null) {
   }
 
   function dot(status, frame = 0) {
-    if (status === 'done')    return `{${S.success}-fg}●{/}`;
+    if (status === 'done')    return `{${S.success}-fg}${G.running}{/}`;
     if (status === 'running') return `{${S.text}-fg}${FRAMES[frame % FRAMES.length]}{/}`;
-    if (status === 'paused')  return `{${S.warning}-fg}●{/}`;
-    if (status === 'error')   return `{${S.error}-fg}●{/}`;
-    return `{${S.subtle}-fg}○{/}`;
+    if (status === 'paused')  return `{${S.warning}-fg}${G.running}{/}`;
+    if (status === 'error')   return `{${S.error}-fg}${G.running}{/}`;
+    return `{${S.subtle}-fg}${G.pending}{/}`;
   }
 
   function shimmerName(text, frame = 0) {
@@ -72,7 +117,7 @@ export function createTimeline(stepNames, widgets = null) {
   }
 
   function compactDots(frame = 0) {
-    return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${S.subtle}-fg}─{/}  `);
+    return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${S.subtle}-fg}${G.dash}{/}  `);
   }
 
   function renderTimeline(frame = 0) {
@@ -84,7 +129,7 @@ export function createTimeline(stepNames, widgets = null) {
       ? `{${S.warning}-fg}{bold}Paused{/}`
       : `{bold}Running{/}`;
     const activityIcon = isPaused
-      ? `{${S.warning}-fg}●{/}`
+      ? `{${S.warning}-fg}${G.running}{/}`
       : `{${S.text}-fg}${FRAMES[frame % FRAMES.length]}{/}`;
     const runningLabel = runningIdx >= 0
       ? `${activityLabel}  ${activityIcon}  ${shimmerName(stepNames[runningIdx], frame)}${currentMeta}`
@@ -102,12 +147,12 @@ export function createTimeline(stepNames, widgets = null) {
       } else if (runningIdx === 0) {
         // Index 0 is always the preflight pseudo-step — it's not a "real" pipeline step,
         // so show "preflight" rather than fold it into the X/N count.
-        const labelText = isPaused ? 'preflight — paused' : 'preflight';
+        const labelText = isPaused ? 'preflight - paused' : 'preflight';
         setLabel(`{${S.text}-fg}{bold}${labelText}{/}`);
       } else {
         // Real steps: 1..(N-1). Subtract 1 from N to exclude preflight from the total.
         const labelText = isPaused
-          ? `step ${runningIdx}/${N - 1} — paused`
+          ? `step ${runningIdx}/${N - 1} - paused`
           : `step ${runningIdx}/${N - 1}`;
         setLabel(`{${S.text}-fg}{bold}${labelText}{/}`);
       }

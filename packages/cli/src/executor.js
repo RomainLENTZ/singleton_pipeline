@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseAgentFileDetailed } from './parser.js';
-import { S } from './shell.js';
+import { G, S } from './shell.js';
 import { getRunner } from './runners/index.js';
 import {
   loadProjectSecurityConfig,
@@ -37,6 +37,7 @@ import {
 } from './executor/step-runner.js';
 import {
   renderRunSummary,
+  writeLatestRunPointer,
   writeRunManifest,
 } from './executor/run-report.js';
 import {
@@ -47,6 +48,7 @@ import {
   collectPipelineInputs,
   createRunTimeline,
   createRunWorkspace,
+  isNonInteractiveRuntime,
   loadPipeline,
   logRunStart,
   resolveProjectRoot,
@@ -68,6 +70,10 @@ function stripBlessedTags(s) {
   return String(s || '').replace(/\{[^}]+\}/g, '');
 }
 
+function sectionTitle(label) {
+  return `${G.hline}${G.hline} ${label} ${G.hline}${G.hline}`;
+}
+
 export async function runPipeline(filePath, opts = {}) {
   const abs = path.resolve(filePath);
   const pipeline = await loadPipeline(abs);
@@ -78,6 +84,7 @@ export async function runPipeline(filePath, opts = {}) {
   const debug   = !!opts.debug;
   const shell   = opts.shell || null;
   const quiet   = !!opts.quiet;
+  const nonInteractive = isNonInteractiveRuntime({ shell, nonInteractive: opts.nonInteractive });
   const maxDebugReplays = Number.isInteger(opts.maxDebugReplays)
     ? Math.max(0, opts.maxDebugReplays)
     : DEFAULT_MAX_DEBUG_REPLAYS;
@@ -88,8 +95,8 @@ export async function runPipeline(filePath, opts = {}) {
 
   const { runId, runDir } = await createRunWorkspace({ cwd, pipeline, dryRun, debug });
   logRunStart({ pipeline, cwd, runDir, dryRun, debug, shell, quiet });
-  const { inputDefs, inputValues } = await collectPipelineInputs({ pipeline, dryRun, shell });
-  const timeline = createRunTimeline({ pipeline, quiet, shell });
+  const { inputDefs, inputValues } = await collectPipelineInputs({ pipeline, dryRun, shell, nonInteractive, quiet });
+  const timeline = createRunTimeline({ pipeline, quiet, shell, nonInteractive });
 
   const registry = {};
   const fileWrites = [];
@@ -106,22 +113,22 @@ export async function runPipeline(filePath, opts = {}) {
     const preflightSeconds = (Date.now() - preflightStarted) / 1000;
 
     if (preflight.infos.length) {
-      timeline.log(`── preflight info ──`);
+      timeline.log(sectionTitle('preflight info'));
       for (const info of preflight.infos) timeline.logMuted(info);
     }
 
     if (preflight.securityHighlights.length) {
-      timeline.log(`── security profile preview ──`);
+      timeline.log(sectionTitle('security profile preview'));
       for (const item of preflight.securityHighlights) timeline.logMuted(item);
     }
 
     if (preflight.warnings.length) {
-      timeline.log(`── preflight warnings ──`);
+      timeline.log(sectionTitle('preflight warnings'));
       for (const warning of preflight.warnings) timeline.logMuted(warning);
     }
 
       if (!preflight.ok) {
-        timeline.log(`── preflight errors ──`);
+        timeline.log(sectionTitle('preflight errors'));
         for (const error of preflight.errors) timeline.logMuted(error);
         stats.push({
           agent: 'preflight checks',
@@ -142,8 +149,8 @@ export async function runPipeline(filePath, opts = {}) {
       );
     }
 
-    timeline.setDone(0, `${preflightSeconds.toFixed(1)}s · ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
-    timeline.logSuccess(`✓ preflight checks — ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
+    timeline.setDone(0, `${preflightSeconds.toFixed(1)}s ${G.bullet} ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
+    timeline.logSuccess(`${G.success} preflight checks - ${preflight.providerCount} provider${preflight.providerCount > 1 ? 's' : ''}`);
     stats.push({
       agent: 'preflight checks',
       provider: 'system',
@@ -204,7 +211,7 @@ export async function runPipeline(filePath, opts = {}) {
         const runnerAgent = resolveRunnerAgent(step, agent);
         const permissionMode = resolvePermissionMode(step, agent);
         const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
-        timeline.setDone(timelineIndex, `dry-run · ${outputNames.join(', ')}`);
+        timeline.setDone(timelineIndex, `dry-run ${G.bullet} ${outputNames.join(', ')}`);
         for (const name of outputNames) registry[`${step.agent}.${name}`] = `(dry-run:${step.agent}.${name})`;
         stats.push({
           agent: step.agent,
@@ -289,7 +296,7 @@ export async function runPipeline(filePath, opts = {}) {
             registry[`${step.agent}.${name}`] = `(debug-skipped:${step.agent}.${name})`;
           }
           timeline.setDone(timelineIndex, 'skipped by debug');
-          timeline.log(`↷ ${step.agent} — skipped by debug`);
+          timeline.log(`${G.skipped} ${step.agent} - skipped by debug`);
           stats.push({
             agent: step.agent,
             provider,
@@ -560,11 +567,11 @@ export async function runPipeline(filePath, opts = {}) {
         }
 
       const totalElapsed = totalAttemptSeconds.toFixed(1);
-      const costInfo = totalAttemptCost ? ` · $${totalAttemptCost.toFixed(4)}` : '';
-      const turnInfo = totalAttemptTurns ? ` · ${totalAttemptTurns}t` : '';
-      const attemptInfo = attempt > 1 ? ` · ${attempt} attempts` : '';
+      const costInfo = totalAttemptCost ? ` ${G.bullet} $${totalAttemptCost.toFixed(4)}` : '';
+      const turnInfo = totalAttemptTurns ? ` ${G.bullet} ${totalAttemptTurns}t` : '';
+      const attemptInfo = attempt > 1 ? ` ${G.bullet} ${attempt} attempts` : '';
       timeline.setDone(timelineIndex, `${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
-      timeline.logSuccess(`✓ ${step.agent} — ${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
+      timeline.logSuccess(`${G.success} ${step.agent} - ${totalElapsed}s${attemptInfo}${turnInfo}${costInfo}`);
       stats.push({
         agent: step.agent,
         provider,
@@ -609,9 +616,7 @@ export async function runPipeline(filePath, opts = {}) {
       error: runError,
       debugEvents,
     });
-    const latest = path.join(cwd, '.singleton', 'runs', 'latest');
-    try { await fs.unlink(latest); } catch { /* missing is fine */ }
-    try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical */ }
+    await writeLatestRunPointer({ cwd, runId });
   }
 
   const combinedWrites = [];
@@ -640,13 +645,13 @@ export async function runPipeline(filePath, opts = {}) {
     shell?.setMode?.('error');
     // One-line outcome banner: bold red marker + reason inline (instead of two stacked × lines).
     const reason = String(runError.message || 'unknown error').split('\n')[0];
-    out(`{${S.error}-fg}{bold}✕ Pipeline failed{/}{${S.muted}-fg}  —  {/}{${S.error}-fg}${reason}{/}`);
+    out(`{${S.error}-fg}{bold}${G.error} Pipeline failed{/}{${S.muted}-fg}  -  {/}{${S.error}-fg}${reason}{/}`);
     out('');
     throw runError;
   }
   shell?.setMode?.(null);
   out(dryRun
-    ? `{${S.success}-fg}{bold}✓ Dry-run complete{/}`
-    : `{${S.success}-fg}{bold}✓ Pipeline complete{/}`);
+    ? `{${S.success}-fg}{bold}${G.success} Dry-run complete{/}`
+    : `{${S.success}-fg}{bold}${G.success} Pipeline complete{/}`);
   out('');
 }

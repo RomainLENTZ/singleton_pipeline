@@ -1,7 +1,20 @@
 import blessed from 'blessed';
 
+export const ASCII_MODE = process.env.SINGLETON_ASCII === '1'
+  || (process.platform === 'win32' && process.env.SINGLETON_UNICODE !== '1');
+
 // ── Pastel theme ────────────────────────────────────────────────
-export const C = {
+export const C = ASCII_MODE ? {
+  violet:  'magenta',
+  pink:    'magenta',
+  blue:    'blue',
+  mint:    'green',
+  peach:   'yellow',
+  salmon:  'red',
+  dimV:    'gray',
+  line:    'gray',
+  ghost:   'gray',
+} : {
   violet:  '#C084FC',   // accent principal
   pink:    '#F9A8D4',   // secondaire
   blue:    '#93C5FD',   // tertiaire
@@ -24,7 +37,18 @@ export const C = {
 //   success  — positive markers (✓), confirmations
 //   warning  — attention markers (!), announcements (New)
 //   error    — failure markers (✕), blocking errors
-export const S = {
+export const S = ASCII_MODE ? {
+  text:    'white',
+  muted:   'gray',
+  subtle:  'gray',
+  border:  'gray',
+  accent:  'magenta',
+  keyword: 'blue',
+  string:  'magenta',
+  success: 'green',
+  warning: 'yellow',
+  error:   'red',
+} : {
   text:    '#FFFFFF',
   muted:   '#8E8B9E',   // soft cool gray, very subtly violet-tinted — reads as "quiet"
   subtle:  '#797C81',
@@ -35,6 +59,38 @@ export const S = {
   success: '#6EE7B7',
   warning: '#FDBA74',
   error:   '#FCA5A5',
+};
+
+export const G = ASCII_MODE ? {
+  scrollbar: '|',
+  pointer: '>',
+  cursor: '|',
+  cancel: '<-',
+  bullet: '.',
+  dash: '-',
+  hline: '-',
+  vline: '|',
+  cross: '+',
+  success: 'OK',
+  error: 'X',
+  running: '*',
+  pending: 'o',
+  skipped: '->',
+} : {
+  scrollbar: '│',
+  pointer: '›',
+  cursor: '▌',
+  cancel: '↩',
+  bullet: '·',
+  dash: '─',
+  hline: '─',
+  vline: '│',
+  cross: '┼',
+  success: '✓',
+  error: '✕',
+  running: '●',
+  pending: '○',
+  skipped: '↷',
 };
 
 export function createShell() {
@@ -57,7 +113,7 @@ export function createShell() {
     style: { border: { fg: S.border } },
     padding: { left: 1, top: 0, right: 1 },
     scrollbar: {
-      ch: '│',
+      ch: G.scrollbar,
       style: { fg: S.border }
     }
   });
@@ -74,7 +130,7 @@ export function createShell() {
     style: { border: { fg: S.border } },
     padding: { left: 1, top: 0, right: 1 },
     scrollbar: {
-      ch: '│',
+      ch: G.scrollbar,
       style: { fg: S.border }
     }
   });
@@ -206,7 +262,7 @@ export function createShell() {
     // suggestIndex === -1 means "no active selection" (passive listing after a soft Enter on /run).
     const lines = suggestions.slice(start, start + maxItems).map((item, idx) => {
       const active = suggestIndex >= 0 && start + idx === suggestIndex;
-      const marker = active ? `{${S.accent}-fg}{bold}›{/}` : ' ';
+      const marker = active ? `{${S.accent}-fg}{bold}${G.pointer}{/}` : ' ';
       const label = active
         ? `{${S.text}-fg}{bold}${item.label}{/}`
         : `{${S.muted}-fg}${item.label}{/}`;
@@ -274,14 +330,14 @@ export function createShell() {
         ? `{${S.subtle}-fg}${promptMode.default}{/}`
         : '';
       promptBox.setContent(
-        `${marker}${renderedMessage}  {${S.muted}-fg}›{/}  ${buffer}{${S.accent}-fg}▌{/}${ghost}`
+        `${marker}${renderedMessage}  {${S.muted}-fg}${G.pointer}{/}  ${buffer}{${S.accent}-fg}${G.cursor}{/}${ghost}`
       );
     } else {
       if (buffer) {
-        promptBox.setContent(`{${S.muted}-fg}›{/}  ${buffer}{${S.accent}-fg}▌{/}`);
+        promptBox.setContent(`{${S.muted}-fg}${G.pointer}{/}  ${buffer}{${S.accent}-fg}${G.cursor}{/}`);
       } else {
         const hint = history.length === 0 ? inputHints[0] : inputHints[hintIndex];
-        promptBox.setContent(`{${S.muted}-fg}›{/}  {${S.accent}-fg}▌{/}{${S.subtle}-fg}${hint}{/}`);
+        promptBox.setContent(`{${S.muted}-fg}${G.pointer}{/}  {${S.accent}-fg}${G.cursor}{/}{${S.subtle}-fg}${hint}{/}`);
       }
     }
     screen.render();
@@ -408,7 +464,7 @@ export function createShell() {
       const { resolve, message, silent } = promptMode;
       promptMode = null;
       buffer = '';
-      if (!silent) log(`{${S.subtle}-fg}↩ cancelled{/} {${S.muted}-fg}${message}{/}`);
+      if (!silent) log(`{${S.subtle}-fg}${G.cancel} cancelled{/} {${S.muted}-fg}${message}{/}`);
       updatePrompt();
       resolve('__SINGLETON_ESC__');
       return;

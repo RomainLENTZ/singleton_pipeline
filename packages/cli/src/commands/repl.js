@@ -8,6 +8,7 @@ import { scanAgents } from '../scanner.js';
 import { runPipeline } from '../executor.js';
 import { newAgentShellCommand } from './new.js';
 import { loadProjectSecurityConfig } from '../security/policy.js';
+import { resolveLatestRunDir } from '../executor/run-report.js';
 
 const PIPELINES_DIRS = ['.singleton/pipelines'];
 
@@ -92,7 +93,7 @@ function runCommand(cmd, args, { cwd }) {
 }
 
 async function loadLastRunManifest(root) {
-  const latestDir = path.join(root, '.singleton', 'runs', 'latest');
+  const latestDir = await resolveLatestRunDir(root);
   const manifestPath = path.join(latestDir, 'run-manifest.json');
   const raw = await fs.readFile(manifestPath, 'utf8');
   return JSON.parse(raw);
