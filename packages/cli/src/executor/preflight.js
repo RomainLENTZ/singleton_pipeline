@@ -429,15 +429,21 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
   }
 
   const usedProviders = [...new Set(parsedAgents.map(({ step, agent }) => resolveProvider(step, agent)))];
-  for (const provider of usedProviders) {
-    try {
-      const runner = getRunner(provider);
-      if (runner.command) {
-        const exists = await commandExists(runner.command);
-        if (!exists) errors.push(`Provider "${provider}" requires missing CLI binary: ${runner.command}`);
+  if (dryRun) {
+    if (usedProviders.length) {
+      infos.push(`Dry-run: skipped provider CLI binary checks (${usedProviders.join(', ')}).`);
+    }
+  } else {
+    for (const provider of usedProviders) {
+      try {
+        const runner = getRunner(provider);
+        if (runner.command) {
+          const exists = await commandExists(runner.command);
+          if (!exists) errors.push(`Provider "${provider}" requires missing CLI binary: ${runner.command}`);
+        }
+      } catch {
+        // already captured above
       }
-    } catch {
-      // already captured above
     }
   }
 
