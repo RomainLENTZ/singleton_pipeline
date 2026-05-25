@@ -11,6 +11,19 @@ import {
   writeRawOutputArtifact,
 } from './outputs.js';
 
+/** @typedef {import('../types.js').FileWrite} FileWrite */
+/** @typedef {import('../types.js').PipelineStep} PipelineStep */
+/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+/** @typedef {import('../types.js').SnapshotChange} SnapshotChange */
+/** @typedef {import('../types.js').SnapshotManagerLike} SnapshotManagerLike */
+/** @typedef {import('../types.js').SnapshotState} SnapshotState */
+/** @typedef {import('../types.js').TimelineController} TimelineController */
+
+/**
+ * @param {{ provider?: string | null, model?: string | null, permissionMode?: string | null, securityProfile?: string | null }} options
+ * @returns {string}
+ */
 function formatStepRuntimeMeta({ provider, model, permissionMode, securityProfile }) {
   const parts = [];
   if (provider) parts.push(provider);
@@ -20,6 +33,11 @@ function formatStepRuntimeMeta({ provider, model, permissionMode, securityProfil
   return parts.join(' · ');
 }
 
+/**
+ * @param {Record<string, string>} parsed
+ * @param {string[]} outputNames
+ * @returns {string[]}
+ */
 export function validateParsedOutputs(parsed, outputNames) {
   const warnings = [];
   for (const name of outputNames) {
@@ -29,6 +47,10 @@ export function validateParsedOutputs(parsed, outputNames) {
   return warnings;
 }
 
+/**
+ * @param {{ changes: SnapshotChange[], securityPolicy: SecurityPolicy, step: PipelineStep, cwd: string }} options
+ * @returns {Array<{ path: string, reason: string }>}
+ */
 export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
   const violations = [];
   for (const change of changes) {
@@ -42,13 +64,42 @@ export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
     } catch (err) {
       violations.push({
         path: change.relPath,
-        reason: err.message,
+        reason: err instanceof Error ? err.message : String(err),
       });
     }
   }
   return violations;
 }
 
+/**
+ * @param {object} options
+ * @param {number} options.attempt
+ * @param {boolean} options.debug
+ * @param {string | null} options.stepDir
+ * @param {string} options.cwd
+ * @param {PipelineStep} options.step
+ * @param {string[]} options.outputNames
+ * @param {Record<string, string>} options.inputs
+ * @param {SecurityPolicy} options.securityPolicy
+ * @param {string} options.systemPrompt
+ * @param {{ projectRoot: string, stepDirRel: string } | null} options.workspaceInfo
+ * @param {TimelineController} options.timeline
+ * @param {number} options.timelineIndex
+ * @param {boolean} options.verbose
+ * @param {ProviderRunner} options.runner
+ * @param {string} options.provider
+ * @param {string | null} options.model
+ * @param {string | null} options.runnerAgent
+ * @param {string} options.permissionMode
+ * @param {Record<string, string>} options.inputValues
+ * @param {Record<string, string>} options.registry
+ * @param {FileWrite[]} options.fileWrites
+ * @param {SnapshotManagerLike} options.snapshotManager
+ * @param {SnapshotState | null} options.currentSnapshot
+ * @param {any} options.shell
+ * @param {(options: { violations: Array<{ path: string, reason: string }>, step: PipelineStep, securityPolicy: SecurityPolicy, timeline: TimelineController, timelineIndex: number, shell: any, cwd: string, failStep: Function }) => Promise<void>} options.handlePostRunViolations
+ * @param {(timeline: TimelineController, timelineIndex: number, info: string, message: string) => never} options.failStep
+ */
 export async function runStepAttempt({
   attempt,
   debug,
@@ -154,7 +205,7 @@ export async function runStepAttempt({
 
   for (const name of outputNames) {
     registry[`${step.agent}.${name}`] = parsed[name];
-    let sink = step.outputs[name];
+    let sink = (step.outputs || {})[name];
 
     if (typeof sink === 'string') {
       for (const [id, val] of Object.entries(inputValues)) {
@@ -162,7 +213,7 @@ export async function runStepAttempt({
       }
     }
 
-    if (attemptDir) sink = rewriteInternalSink(sink, { cwd, stepDir: attemptDir });
+    if (attemptDir) sink = /** @type {string} */ (rewriteInternalSink(sink, { cwd, stepDir: attemptDir }));
 
     if (typeof sink === 'string' && sink.startsWith('$FILES:')) {
       const baseDir = sink.slice('$FILES:'.length).trim();

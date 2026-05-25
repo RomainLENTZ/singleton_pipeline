@@ -3,6 +3,23 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { S } from '../shell.js';
 
+/** @typedef {import('../types.js').CommandResult} CommandResult */
+/** @typedef {import('../types.js').PipelineStep} PipelineStep */
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+/** @typedef {import('../types.js').TimelineController} TimelineController */
+
+/**
+ * @typedef {object} SecurityViolation
+ * @property {string} path
+ * @property {string=} reason
+ */
+
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd: string }} options
+ * @returns {Promise<CommandResult>}
+ */
 function runCommand(cmd, args, { cwd }) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -21,6 +38,12 @@ function runCommand(cmd, args, { cwd }) {
   });
 }
 
+/**
+ * @param {string} cwd
+ * @param {string} relPath
+ * @param {{ maxLines?: number }} [options]
+ * @returns {Promise<string[]>}
+ */
 export async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = {}) {
   try {
     const { stdout } = await runCommand('git', ['diff', '--', relPath], { cwd });
@@ -50,6 +73,10 @@ export async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = 
   }
 }
 
+/**
+ * @param {{ violations: SecurityViolation[], cwd: string, timeline: TimelineController }} options
+ * @returns {Promise<void>}
+ */
 async function logViolationDiffPreviews({ violations, cwd, timeline }) {
   const maxFiles = 5;
   const shown = violations.slice(0, maxFiles);
@@ -63,6 +90,10 @@ async function logViolationDiffPreviews({ violations, cwd, timeline }) {
   }
 }
 
+/**
+ * @param {{ violations: SecurityViolation[], step: PipelineStep, securityPolicy: SecurityPolicy, timeline: TimelineController, timelineIndex: number, shell: any, cwd: string, failStep: (timeline: TimelineController, timelineIndex: number, info: string, message: string) => never }} options
+ * @returns {Promise<void>}
+ */
 export async function handlePostRunViolations({ violations, step, securityPolicy, timeline, timelineIndex, shell, cwd, failStep }) {
   if (violations.length === 0) return;
 

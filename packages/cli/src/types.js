@@ -62,7 +62,7 @@
 
 /**
  * @typedef {object} FileWrite
- * @property {string} path
+ * @property {string=} path
  * @property {string} absPath
  * @property {string} relPath
  * @property {string} kind
@@ -107,6 +107,7 @@
  * @property {string=} permissionMode
  * @property {SecurityPolicy=} securityPolicy
  * @property {number=} timeoutMs
+ * @property {boolean=} verbose
  */
 
 /**
@@ -126,6 +127,31 @@
  * @typedef {object} CommandResult
  * @property {string} stdout
  * @property {string} stderr
+ */
+
+/**
+ * @typedef {object} TimelineController
+ * @property {(index: number, info?: string) => void} setRunning
+ * @property {(text: string) => void} log
+ * @property {(text: string) => void} logMuted
+ * @property {(line: string) => void} logDiffLine
+ */
+
+/**
+ * @typedef {object} SnapshotChange
+ * @property {string} relPath
+ * @property {string} absPath
+ * @property {string} kind
+ */
+
+/**
+ * @typedef {Map<string, string> & { gitStatus?: Map<string, string> | null }} SnapshotState
+ */
+
+/**
+ * @typedef {object} SnapshotManagerLike
+ * @property {() => Promise<SnapshotState>} captureState
+ * @property {(before: SnapshotState, after: SnapshotState) => SnapshotChange[]} detectChanges
  */
 
 /**

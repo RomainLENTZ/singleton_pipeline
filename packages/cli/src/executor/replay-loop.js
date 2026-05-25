@@ -10,6 +10,50 @@ import {
   pushDebugEvent,
 } from './debug-loop.js';
 
+/** @typedef {import('../types.js').InputDef} InputDef */
+/** @typedef {import('../types.js').FileWrite} FileWrite */
+/** @typedef {import('../types.js').PipelineStep} PipelineStep */
+/** @typedef {import('../types.js').ProviderId} ProviderId */
+/** @typedef {import('../types.js').RunStat} RunStat */
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+/** @typedef {import('../types.js').SnapshotChange} SnapshotChange */
+/** @typedef {import('../types.js').SnapshotManagerLike} SnapshotManagerLike */
+/** @typedef {import('../types.js').SnapshotState} SnapshotState */
+/** @typedef {import('../types.js').TimelineController} TimelineController */
+
+/**
+ * @param {object} options
+ * @param {number} options.attempt
+ * @param {{ stepChanges?: SnapshotChange[], stepWrites?: FileWrite[] } | null} options.finalAttempt
+ * @param {{ snapshotDir: string, captured: Set<string>, skippedLarge: string[], skippedBinary: string[], skippedIgnored: string[] } | null} options.stepSnapshot
+ * @param {SnapshotManagerLike & { restore: (options: { snapshot: any, originalPaths: Set<string>, changes: SnapshotChange[] }) => Promise<{ restored: string[], removed: string[], skipped: string[] }> }} options.snapshotManager
+ * @param {Set<string>} options.stepOriginalPaths
+ * @param {Map<string, string | undefined>} options.stepRegistrySnapshot
+ * @param {Record<string, string>} options.registry
+ * @param {Record<string, string>} options.replayInputs
+ * @param {Record<string, string> | null} options.replayInputOverride
+ * @param {PipelineStep} options.step
+ * @param {any[]} options.debugEvents
+ * @param {InputDef[]} options.inputDefs
+ * @param {TimelineController} options.timeline
+ * @param {any} options.shell
+ * @param {string[]} options.outputNames
+ * @param {(attempt: number) => { projectRoot: string, stepDirRel: string } | null} options.workspaceInfoForAttempt
+ * @param {string} options.systemPrompt
+ * @param {SecurityPolicy} options.securityPolicy
+ * @param {Record<string, string>} options.debugInputOverrides
+ * @param {SnapshotState | null} options.currentSnapshot
+ * @param {RunStat[]} options.stats
+ * @param {ProviderId | 'system'} options.provider
+ * @param {string | null} options.model
+ * @param {string | null} options.runnerAgent
+ * @param {string} options.permissionMode
+ * @param {number} options.totalAttemptSeconds
+ * @param {number} options.totalAttemptTurns
+ * @param {number} options.totalAttemptCost
+ * @param {number} options.timelineIndex
+ * @param {(timeline: TimelineController, timelineIndex: number, info: string, message: string) => never} options.failStep
+ */
 export async function prepareReplayAttempt({
   attempt,
   finalAttempt,
@@ -101,7 +145,7 @@ export async function prepareReplayAttempt({
         timeline,
         timelineIndex,
         'replay restore failed',
-        `Replay restore failed before step "${step.agent}" attempt ${attempt}: ${err.message}`
+        `Replay restore failed before step "${step.agent}" attempt ${attempt}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }

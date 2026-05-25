@@ -3,6 +3,10 @@ import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
+/** @typedef {import('../types.js').CommandResult} CommandResult */
+/** @typedef {import('../types.js').SnapshotChange} SnapshotChange */
+/** @typedef {import('../types.js').SnapshotState} SnapshotState */
+
 export const SNAPSHOT_SKIP_DIRS = new Set([
   '.git',
   '.singleton',
@@ -23,10 +27,20 @@ const SNAPSHOT_BINARY_PROBE_BYTES = 8192;
 // All relPaths exposed by this module use POSIX separators ('/'), so that
 // run manifests, restore reports and diffs stay portable across OSes.
 // path.join still accepts '/' on win32, so fs operations remain correct.
+/**
+ * @param {unknown} p
+ * @returns {string}
+ */
 function toPosix(p) {
   return String(p || '').split(path.sep).join('/');
 }
 
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd: string }} options
+ * @returns {Promise<CommandResult>}
+ */
 function runCommand(cmd, args, { cwd }) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -45,7 +59,13 @@ function runCommand(cmd, args, { cwd }) {
   });
 }
 
-export async function snapshotProjectFiles(root, rel = '', out = new Map()) {
+/**
+ * @param {string} root
+ * @param {string} [rel]
+ * @param {SnapshotState} [out]
+ * @returns {Promise<SnapshotState>}
+ */
+export async function snapshotProjectFiles(root, rel = '', out = /** @type {SnapshotState} */ (new Map())) {
   const abs = path.join(root, rel);
   const entries = await fs.readdir(abs, { withFileTypes: true });
   for (const entry of entries) {
@@ -83,13 +103,13 @@ export async function gitFilterIgnoredPaths(root, relPaths) {
     });
     let stdout = '';
     child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.on('error', () => resolve());
+    child.on('error', () => resolve(undefined));
     child.on('close', () => {
       for (const line of stdout.split('\n')) {
         const trimmed = line.trim();
         if (trimmed) ignored.add(trimmed);
       }
-      resolve();
+      resolve(undefined);
     });
     child.stdin.write(posix.join('\n'));
     child.stdin.end();
@@ -257,12 +277,19 @@ export function formatSnapshotCoverage(snapshot) {
 }
 
 export class SnapshotManager {
+  /**
+   * @param {{ root: string, gitRepo?: boolean }} options
+   */
   constructor({ root, gitRepo = false }) {
     this.root = root;
     this.gitRepo = gitRepo;
   }
 
-  static async create({ root, gitRepo = null } = {}) {
+  /**
+   * @param {{ root: string, gitRepo?: boolean | null }} options
+   * @returns {Promise<SnapshotManager>}
+   */
+  static async create({ root, gitRepo = null }) {
     return new SnapshotManager({
       root,
       gitRepo: gitRepo ?? await detectGitRepo(root),

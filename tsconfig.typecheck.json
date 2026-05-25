@@ -7,11 +7,16 @@
   "include": [
     "packages/cli/src/types.js",
     "packages/cli/src/parser.js",
+    "packages/cli/src/executor/debug-loop.js",
     "packages/cli/src/executor/inputs.js",
     "packages/cli/src/executor/outputs.js",
     "packages/cli/src/executor/preflight.js",
+    "packages/cli/src/executor/replay-loop.js",
     "packages/cli/src/executor/run-report.js",
     "packages/cli/src/executor/run-setup.js",
+    "packages/cli/src/executor/security-review.js",
+    "packages/cli/src/executor/snapshot-manager.js",
+    "packages/cli/src/executor/step-runner.js",
     "packages/cli/src/scanner.js",
     "packages/cli/src/security/policy.js",
     "packages/server/src/routes/files.js"
