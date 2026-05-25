@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": [
+    "packages/cli/src/types.js",
+    "packages/cli/src/parser.js",
+    "packages/cli/src/security/policy.js",
+    "packages/server/src/routes/files.js"
+  ]
+}
