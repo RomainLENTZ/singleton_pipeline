@@ -100,7 +100,7 @@ export async function resolveInput(spec, { registry, cwd, inputValues = {}, inpu
   return escapePromptXml(spec);
 }
 
-export async function collectInputValues(pipeline, dryRun, { promptFn = null, style = null } = {}) {
+export async function collectInputValues(pipeline, dryRun, { promptFn = null, style = null, nonInteractive = false } = {}) {
   const defs = (pipeline.nodes || [])
     .filter((n) => n.type === 'input')
     .map((n) => ({ id: n.id, subtype: n.data?.subtype || 'text', label: n.data?.label || n.id, value: n.data?.value || '' }));
@@ -119,6 +119,13 @@ export async function collectInputValues(pipeline, dryRun, { promptFn = null, st
     } else if (dryRun) {
       values[def.id] = def.subtype === 'file' ? '(file path not provided)' : 'arbitrary response (dry-run)';
       if (!promptFn && style) console.log(style.muted(`  ${label}: (arbitrary)`));
+    } else if (nonInteractive) {
+      if (def.value) {
+        values[def.id] = def.value;
+        if (!promptFn && style) console.log(style.muted(`  ${label}: ${def.value}`));
+      } else {
+        throw new Error(`Missing non-interactive input "${def.id}". Set a default value in the pipeline or run in an interactive terminal.`);
+      }
     } else {
       const msg = def.subtype === 'file' ? `${label} (file path)` : label;
       values[def.id] = await askFn(msg, def.value || null);

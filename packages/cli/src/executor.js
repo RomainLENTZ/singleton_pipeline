@@ -48,6 +48,7 @@ import {
   collectPipelineInputs,
   createRunTimeline,
   createRunWorkspace,
+  isNonInteractiveRuntime,
   loadPipeline,
   logRunStart,
   resolveProjectRoot,
@@ -79,6 +80,7 @@ export async function runPipeline(filePath, opts = {}) {
   const debug   = !!opts.debug;
   const shell   = opts.shell || null;
   const quiet   = !!opts.quiet;
+  const nonInteractive = isNonInteractiveRuntime({ shell, nonInteractive: opts.nonInteractive });
   const maxDebugReplays = Number.isInteger(opts.maxDebugReplays)
     ? Math.max(0, opts.maxDebugReplays)
     : DEFAULT_MAX_DEBUG_REPLAYS;
@@ -89,8 +91,8 @@ export async function runPipeline(filePath, opts = {}) {
 
   const { runId, runDir } = await createRunWorkspace({ cwd, pipeline, dryRun, debug });
   logRunStart({ pipeline, cwd, runDir, dryRun, debug, shell, quiet });
-  const { inputDefs, inputValues } = await collectPipelineInputs({ pipeline, dryRun, shell });
-  const timeline = createRunTimeline({ pipeline, quiet, shell });
+  const { inputDefs, inputValues } = await collectPipelineInputs({ pipeline, dryRun, shell, nonInteractive, quiet });
+  const timeline = createRunTimeline({ pipeline, quiet, shell, nonInteractive });
 
   const registry = {};
   const fileWrites = [];

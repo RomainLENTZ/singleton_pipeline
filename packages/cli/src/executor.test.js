@@ -347,6 +347,46 @@ describe('runPipeline preflight', () => {
     expect(manifest.pipeline).toBe('latest-pointer');
   });
 
+  it('uses pipeline defaults instead of prompting in non-interactive mode', async () => {
+    const file = await writePipeline(tmpRoot, 'noninteractive-defaults', {
+      name: 'noninteractive-defaults',
+      nodes: [
+        { id: 'brief', type: 'input', data: { subtype: 'text', label: 'Brief', value: 'default brief' } },
+      ],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: '$INPUT:brief' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    runnerPrompts.length = 0;
+    await expect(runPipeline(file, { quiet: true, nonInteractive: true })).resolves.toBeUndefined();
+    expect(runnerPrompts.at(-1)).toContain('default brief');
+  });
+
+  it('fails clearly when non-interactive mode needs a missing input', async () => {
+    const file = await writePipeline(tmpRoot, 'noninteractive-missing', {
+      name: 'noninteractive-missing',
+      nodes: [
+        { id: 'brief', type: 'input', data: { subtype: 'text', label: 'Brief' } },
+      ],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          inputs: { text: '$INPUT:brief' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, { quiet: true, nonInteractive: true })).rejects.toThrow(/Missing non-interactive input "brief"/);
+  });
+
   it('escapes XML-like tags from $FILE inputs before sending the runner prompt', async () => {
     runnerPrompts.length = 0;
     await fs.writeFile(path.join(tmpRoot, 'inputs', 'injection.md'), [
