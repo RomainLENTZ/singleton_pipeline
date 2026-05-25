@@ -4,6 +4,10 @@ import path from 'node:path';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.singleton', 'dist', 'build', '.next', '.cache']);
 
+export function toApiFilePath(relPath) {
+  return String(relPath || '').replace(/\\/g, '/');
+}
+
 async function walk(root, rel = '', out = []) {
   const abs = path.join(root, rel);
   const entries = await fs.readdir(abs, { withFileTypes: true });
@@ -15,7 +19,7 @@ async function walk(root, rel = '', out = []) {
       if (SKIP_DIRS.has(e.name)) continue;
       await walk(root, path.join(rel, e.name), out);
     } else if (e.isFile()) {
-      out.push(path.join(rel, e.name));
+      out.push(toApiFilePath(path.join(rel, e.name)));
     }
   }
   return out;
