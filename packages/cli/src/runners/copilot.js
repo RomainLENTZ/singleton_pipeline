@@ -4,6 +4,14 @@ import { extractText, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
+
+/**
+ * @param {string} systemPrompt
+ * @param {string} userPrompt
+ * @returns {string}
+ */
 function buildPrompt(systemPrompt, userPrompt) {
   return [
     '<system>',
@@ -37,6 +45,10 @@ function toWritePattern(entry) {
   return `${normalized}/**`;
 }
 
+/**
+ * @param {Partial<SecurityPolicy>} [securityPolicy]
+ * @returns {string[]}
+ */
 export function buildCopilotPermissionArgs(securityPolicy = {}) {
   const profile = securityPolicy.profile || 'workspace-write';
   const args = [];
@@ -81,6 +93,10 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
+/**
+ * @param {{ prompt?: string, model?: string | null, runnerAgent?: string | null, securityPolicy?: Partial<SecurityPolicy> }} [options]
+ * @returns {string[]}
+ */
 export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
   // Copilot CLI expects the user prompt as `-p <text>` arg. Passing `-p -` is
   // interpreted as the literal string "-", not as a stdin marker, so we always
@@ -99,6 +115,9 @@ export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = 
   return args;
 }
 
+/**
+ * @param {any[]} events
+ */
 export function summarizeCopilotEvents(events) {
   // Copilot emits intermediate `assistant.message` events between tool calls
   // (the model's "thinking out loud"). The final deliverable is the LAST
@@ -127,16 +146,22 @@ export function summarizeCopilotEvents(events) {
   };
 }
 
+/**
+ * @param {unknown} event
+ * @returns {string}
+ */
 export function extractCopilotErrorMessage(event) {
   if (!event || typeof event !== 'object') return '';
-  if (typeof event.error === 'string') return event.error;
-  if (typeof event.message === 'string') return event.message;
-  if (typeof event.error?.message === 'string') return event.error.message;
-  if (typeof event.error?.data?.message === 'string') return event.error.data.message;
-  if (typeof event.data?.message === 'string') return event.data.message;
-  return extractText(event);
+  const item = /** @type {any} */ (event);
+  if (typeof item.error === 'string') return item.error;
+  if (typeof item.message === 'string') return item.message;
+  if (typeof item.error?.message === 'string') return item.error.message;
+  if (typeof item.error?.data?.message === 'string') return item.error.data.message;
+  if (typeof item.data?.message === 'string') return item.data.message;
+  return extractText(item);
 }
 
+/** @type {ProviderRunner} */
 export const copilotRunner = {
   id: 'copilot',
   command: 'copilot',
@@ -156,6 +181,7 @@ export const copilotRunner = {
     const prompt = runnerAgent ? userPrompt : buildPrompt(systemPrompt, userPrompt);
     const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
+    /** @type {{ events: any[], stderr: string }} */
     const { events, stderr } = await new Promise((resolve, reject) => {
       const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       const stdoutChunks = [];

@@ -20,22 +20,56 @@ const WINDOWS_ARGV_PROMPT_WARN_BYTES = 24 * 1024;
 // with an opaque ENAMETOOLONG/EINVAL surfacing from the spawn syscall.
 const WINDOWS_ARGV_PROMPT_BLOCK_BYTES = 28 * 1024;
 
+/** @typedef {import('../types.js').AgentConfig} AgentConfig */
+/** @typedef {import('../types.js').CommandResult} CommandResult */
+/** @typedef {import('../types.js').InputDef} InputDef */
+/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
+/** @typedef {import('../types.js').PipelineStep} PipelineStep */
+/** @typedef {import('../types.js').ProviderId} ProviderId */
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+
+/**
+ * @param {Partial<PipelineStep>} step
+ * @param {Partial<AgentConfig>} agent
+ * @returns {ProviderId}
+ */
 export function resolveProvider(step, agent) {
   return step.provider || agent.provider || 'claude';
 }
 
+/**
+ * @param {Partial<PipelineStep>} step
+ * @param {Partial<AgentConfig>} agent
+ * @returns {string | null}
+ */
 export function resolveModel(step, agent) {
   return step.model || agent.model || null;
 }
 
+/**
+ * @param {Partial<PipelineStep>} step
+ * @param {Partial<AgentConfig>} agent
+ * @returns {string | null}
+ */
 export function resolveRunnerAgent(step, agent) {
   return step.runner_agent || step.opencode_agent || agent.runner_agent || agent.opencode_agent || null;
 }
 
+/**
+ * @param {Partial<PipelineStep>} step
+ * @param {Partial<AgentConfig>} agent
+ * @returns {string}
+ */
 export function resolvePermissionMode(step, agent) {
   return step.permission_mode || agent.permission_mode || '';
 }
 
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd: string }} options
+ * @returns {Promise<CommandResult>}
+ */
 function runCommand(cmd, args, { cwd }) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -223,7 +257,13 @@ function wrapProviderPromptEstimate(provider, { runnerAgent, systemPrompt, userM
   return '';
 }
 
+/**
+ * @param {PipelineStep} step
+ * @param {{ cwd: string, inputValues: Record<string, string>, inputDefs: InputDef[] }} options
+ * @returns {Promise<Record<string, string>>}
+ */
 async function estimateResolvedInputsForArgv(step, { cwd, inputValues, inputDefs }) {
+  /** @type {Record<string, string>} */
   const resolved = {};
   for (const [name, spec] of Object.entries(step.inputs || {})) {
     if (typeof spec !== 'string') {
@@ -566,7 +606,7 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
           policy: securityPolicy,
         });
       } catch (err) {
-        errors.push(err.message);
+        errors.push(err instanceof Error ? err.message : String(err));
       }
     }
   }

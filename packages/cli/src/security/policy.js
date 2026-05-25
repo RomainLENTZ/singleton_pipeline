@@ -6,19 +6,41 @@ const DEFAULT_PROFILE = 'workspace-write';
 const DEFAULT_BLOCKED_PATHS = ['.git', 'node_modules', '.env', '.env.*', '.ssh'];
 const DEFAULT_COMMIT_EXCLUDE_PATHS = ['.singleton'];
 
+/** @typedef {import('../types.js').AgentConfig} AgentConfig */
+/** @typedef {import('../types.js').PipelineStep} PipelineStep */
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
 function asList(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+/**
+ * @param {string} parent
+ * @param {string} child
+ * @returns {boolean}
+ */
 function isInside(parent, child) {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function normalizeRel(value) {
   return String(value || '').replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
+/**
+ * @param {string} relPath
+ * @param {string} pattern
+ * @returns {boolean}
+ */
 function matchesPattern(relPath, pattern) {
   const rel = normalizeRel(relPath);
   const pat = normalizeRel(pattern);
@@ -30,14 +52,27 @@ function matchesPattern(relPath, pattern) {
   return rel === pat || rel.startsWith(`${pat}/`);
 }
 
+/**
+ * @param {string} root
+ * @param {string} value
+ * @returns {string}
+ */
 function resolvePath(root, value) {
   return path.isAbsolute(value) ? path.resolve(value) : path.resolve(root, value);
 }
 
+/**
+ * @param {Partial<PipelineStep>} [step]
+ * @param {Partial<AgentConfig>} [agent]
+ * @returns {SecurityPolicy}
+ */
 export function resolveSecurityPolicy(step = {}, agent = {}) {
   return resolveSecurityPolicyWithConfig(step, agent);
 }
 
+/**
+ * @param {string} root
+ */
 export async function loadProjectSecurityConfig(root) {
   const file = path.join(root, '.singleton', 'security.json');
   try {
@@ -57,8 +92,10 @@ export async function loadProjectSecurityConfig(root) {
       },
     };
   } catch (err) {
-    if (err.code !== 'ENOENT') {
-      throw new Error(`Invalid project security config: ${file} (${err.message})`);
+    const code = err && typeof err === 'object' && 'code' in err ? err.code : null;
+    const message = err instanceof Error ? err.message : String(err);
+    if (code !== 'ENOENT') {
+      throw new Error(`Invalid project security config: ${file} (${message})`);
     }
     return {
       file,
@@ -73,8 +110,16 @@ export async function loadProjectSecurityConfig(root) {
   }
 }
 
+/**
+ * @param {Partial<PipelineStep>} [step]
+ * @param {Partial<AgentConfig>} [agent]
+ * @param {{ defaultProfile?: string, allowedPaths?: string[], blockedPaths?: string[] }} [projectConfig]
+ * @returns {SecurityPolicy}
+ */
 export function resolveSecurityPolicyWithConfig(step = {}, agent = {}, projectConfig = {}) {
-  const profile = step.security_profile || agent.security_profile || projectConfig.defaultProfile || DEFAULT_PROFILE;
+  const profile = /** @type {SecurityPolicy['profile']} */ (
+    step.security_profile || agent.security_profile || projectConfig.defaultProfile || DEFAULT_PROFILE
+  );
   return {
     profile,
     allowedPaths: asList(step.allowed_paths ?? agent.allowed_paths ?? projectConfig.allowedPaths),
@@ -86,6 +131,10 @@ export function resolveSecurityPolicyWithConfig(step = {}, agent = {}, projectCo
   };
 }
 
+/**
+ * @param {SecurityPolicy} policy
+ * @returns {string[]}
+ */
 export function validateSecurityPolicy(policy) {
   const errors = [];
   if (!VALID_PROFILES.has(policy.profile)) {
@@ -97,6 +146,10 @@ export function validateSecurityPolicy(policy) {
   return errors;
 }
 
+/**
+ * @param {string} absTarget
+ * @param {{ root: string, agentName: string, outputName: string, policy: SecurityPolicy }} options
+ */
 export function assertWriteAllowed(absTarget, { root, agentName, outputName, policy }) {
   const absRoot = path.resolve(root);
   const absPath = path.resolve(absTarget);

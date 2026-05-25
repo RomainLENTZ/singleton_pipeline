@@ -4,34 +4,71 @@ import { G, S } from '../shell.js';
 
 export const LATEST_RUN_ID_FILE = 'latest-run-id';
 
+/** @typedef {import('../types.js').DebugEvent} DebugEvent */
+/** @typedef {import('../types.js').FileWrite} FileWrite */
+/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
+/** @typedef {import('../types.js').RunStat} RunStat */
+
+/**
+ * @param {unknown} s
+ * @returns {number}
+ */
 function visibleLength(s) {
   return String(s || '').replace(/\{[^}]+\}/g, '').length;
 }
 
+/**
+ * @param {unknown} s
+ * @param {number} width
+ * @param {'left' | 'right'} [align]
+ * @returns {string}
+ */
 function padVisible(s, width, align = 'left') {
   const str = String(s ?? '');
   const pad = Math.max(0, width - visibleLength(str));
   return align === 'right' ? `${' '.repeat(pad)}${str}` : `${str}${' '.repeat(pad)}`;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function formatSeconds(value) {
   return `${Number(value || 0).toFixed(1)}s`;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function formatCost(value) {
-  return value > 0 ? `$${value.toFixed(4)}` : '-';
+  const cost = Number(value || 0);
+  return cost > 0 ? `$${cost.toFixed(4)}` : '-';
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function formatTurns(value) {
-  return value > 0 ? String(value) : '-';
+  const turns = Number(value || 0);
+  return turns > 0 ? String(turns) : '-';
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function displayValue(value) {
-  return !value || value === '—' ? '-' : value;
+  return !value || value === '—' ? '-' : String(value);
 }
 
 // Status → color. Only the Status cell is coloured; the rest of the row stays white
 // so the outcome is scannable without being noisy.
+/**
+ * @param {string} status
+ * @returns {string}
+ */
 function statusColor(status) {
   if (status === 'done')    return S.success;
   if (status === 'failed')  return S.error;
@@ -41,6 +78,10 @@ function statusColor(status) {
 }
 
 // Section header in the debug-loop style: blank lines + `─── title ───` centered, colored accent.
+/**
+ * @param {string} title
+ * @returns {string[]}
+ */
 function sectionHeader(title) {
   const width = 72;
   const text = ` ${title} `;
@@ -54,6 +95,10 @@ function sectionHeader(title) {
   ];
 }
 
+/**
+ * @param {{ stats: RunStat[], fileWrites: string[], dryRun: boolean, runDir?: string | null, cwd: string, runStatus?: string | null }} options
+ * @returns {string[]}
+ */
 export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = null }) {
   const totalSeconds = stats.reduce((sum, s) => sum + (s.seconds || 0), 0);
   const totalCost = stats.reduce((sum, s) => sum + (s.cost || 0), 0);
@@ -99,6 +144,11 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   ].join(`{${S.subtle}-fg}${G.cross}{/}`);
 
   // Bold each cell individually because `{/}` from the separator would reset a row-level bold.
+  /**
+   * @param {{ step: string, agent: string, model: string, status: string, time: string, cost: string }} r
+   * @param {{ bold?: boolean, colorStatus?: boolean }} [options]
+   * @returns {string}
+   */
   function row(r, { bold = false, colorStatus = false } = {}) {
     const b = bold ? '{bold}' : '';
     const bClose = bold ? '{/}' : '';
@@ -141,6 +191,10 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   return lines;
 }
 
+/**
+ * @param {{ runDir: string | null, runId: string, pipeline: PipelineConfig, cwd: string, stats: RunStat[], fileWrites: FileWrite[], detectedDeliverables?: FileWrite[], status?: string, error?: Error | null, debugEvents?: DebugEvent[] }} options
+ * @returns {Promise<void>}
+ */
 export async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [], status = 'done', error = null, debugEvents = [] }) {
   if (!runDir) return;
 
@@ -194,6 +248,10 @@ export async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fi
   await fs.writeFile(path.join(runDir, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
 }
 
+/**
+ * @param {{ cwd: string, runId: string }} options
+ * @returns {Promise<void>}
+ */
 export async function writeLatestRunPointer({ cwd, runId }) {
   const runsDir = path.join(cwd, '.singleton', 'runs');
   await fs.mkdir(runsDir, { recursive: true });
@@ -209,6 +267,10 @@ export async function writeLatestRunPointer({ cwd, runId }) {
   try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical on Windows */ }
 }
 
+/**
+ * @param {string} root
+ * @returns {Promise<string>}
+ */
 export async function resolveLatestRunDir(root) {
   const runsDir = path.join(root, '.singleton', 'runs');
   const pointer = path.join(runsDir, LATEST_RUN_ID_FILE);

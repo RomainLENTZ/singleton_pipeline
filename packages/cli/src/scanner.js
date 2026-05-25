@@ -2,6 +2,10 @@ import fg from 'fast-glob';
 import fs from 'node:fs/promises';
 import { parseAgentFile } from './parser.js';
 
+/** @typedef {import('./types.js').AgentConfig} AgentConfig */
+/** @typedef {import('./types.js').DiscoveredAgent} DiscoveredAgent */
+/** @typedef {import('./types.js').ProviderId} ProviderId */
+
 const SOURCES = [
   { kind: 'singleton', pattern: '.singleton/agents/*.md', priority: 3 },
   { kind: 'claude', pattern: '.claude/agents/*.md', priority: 2 },
@@ -9,14 +13,26 @@ const SOURCES = [
   { kind: 'opencode', pattern: '.opencode/agents/*.md', priority: 2 },
 ];
 
+/**
+ * @param {AgentConfig} agent
+ * @param {string} source
+ * @returns {DiscoveredAgent}
+ */
 function normalizeAgent(agent, source) {
+  const sourceProvider = ['claude', 'copilot', 'opencode'].includes(source)
+    ? /** @type {ProviderId} */ (source)
+    : undefined;
   return {
     ...agent,
     source,
-    provider: agent.provider || (['claude', 'copilot', 'opencode'].includes(source) ? source : undefined),
+    provider: agent.provider || sourceProvider,
   };
 }
 
+/**
+ * @param {string} root
+ * @returns {Promise<DiscoveredAgent[]>}
+ */
 export async function scanAgents(root) {
   const selected = new Map();
 

@@ -3,6 +3,16 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import { input } from '@inquirer/prompts';
 
+/** @typedef {import('../types.js').InputDef} InputDef */
+/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
+/** @typedef {import('../types.js').PipelineStep} PipelineStep */
+/** @typedef {import('../types.js').PromptStyle} PromptStyle */
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 export function escapePromptXml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -10,6 +20,10 @@ export function escapePromptXml(value) {
     .replaceAll('>', '&gt;');
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function escapePromptXmlAttribute(value) {
   return escapePromptXml(value).replaceAll('"', '&quot;');
 }
@@ -18,6 +32,11 @@ function escapePromptXmlAttribute(value) {
 // Absolute paths are accepted as-is. Globs go through fast-glob; the
 // literal-path fallback handles the case where fg returns nothing but
 // the file actually exists on disk.
+/**
+ * @param {string} spec
+ * @param {string} cwd
+ * @returns {Promise<Array<{ path: string, content: string }>>}
+ */
 export async function resolveFileGlob(spec, cwd) {
   const pattern = spec.slice('$FILE:'.length).trim();
   const files = await fg(pattern, { cwd, absolute: true, dot: false });
@@ -38,6 +57,11 @@ export async function resolveFileGlob(spec, cwd) {
   return results;
 }
 
+/**
+ * @param {string} spec
+ * @param {Record<string, string>} registry
+ * @returns {string}
+ */
 function resolvePipeRef(spec, registry) {
   const ref = spec.slice('$PIPE:'.length).trim();
   const [agentId, outName] = ref.split('.');
@@ -48,18 +72,34 @@ function resolvePipeRef(spec, registry) {
   return registry[key];
 }
 
+/**
+ * @param {string} spec
+ * @returns {{ ref: string, agentId: string, outName: string | undefined }}
+ */
 export function parsePipeRef(spec) {
   const ref = String(spec).slice('$PIPE:'.length).trim();
   const [agentId, outName] = ref.split('.');
   return { ref, agentId, outName };
 }
 
+/**
+ * @param {unknown} spec
+ * @returns {string | null}
+ */
 function parseInputRef(spec) {
   if (typeof spec !== 'string' || !spec.startsWith('$INPUT:')) return null;
   return spec.slice('$INPUT:'.length).trim();
 }
 
+/**
+ * @param {PipelineStep} step
+ * @param {Record<string, string>} previousInputs
+ * @param {Record<string, string>} nextInputs
+ * @param {InputDef[]} [inputDefs]
+ * @returns {Record<string, string>}
+ */
 export function resolveDebugInputOverridesFromEdit(step, previousInputs, nextInputs, inputDefs = []) {
+  /** @type {Record<string, string>} */
   const overrides = {};
   for (const [name, value] of Object.entries(nextInputs || {})) {
     if (previousInputs?.[name] === value) continue;
@@ -72,6 +112,11 @@ export function resolveDebugInputOverridesFromEdit(step, previousInputs, nextInp
   return overrides;
 }
 
+/**
+ * @param {unknown} spec
+ * @param {{ registry: Record<string, string>, cwd: string, inputValues?: Record<string, string>, inputDefs?: InputDef[] }} options
+ * @returns {Promise<string>}
+ */
 export async function resolveInput(spec, { registry, cwd, inputValues = {}, inputDefs = [] }) {
   if (typeof spec !== 'string') return escapePromptXml(spec);
   if (spec.startsWith('$INPUT:')) {
@@ -100,7 +145,14 @@ export async function resolveInput(spec, { registry, cwd, inputValues = {}, inpu
   return escapePromptXml(spec);
 }
 
+/**
+ * @param {PipelineConfig & { nodes?: Array<{ id: string, type: string, data?: { subtype?: string, label?: string, value?: string } }> }} pipeline
+ * @param {boolean} dryRun
+ * @param {{ promptFn?: ((message: string, defaultValue: string | null) => Promise<string>) | null, style?: PromptStyle | null, nonInteractive?: boolean }} [options]
+ * @returns {Promise<Record<string, string>>}
+ */
 export async function collectInputValues(pipeline, dryRun, { promptFn = null, style = null, nonInteractive = false } = {}) {
+  /** @type {InputDef[]} */
   const defs = (pipeline.nodes || [])
     .filter((n) => n.type === 'input')
     .map((n) => ({ id: n.id, subtype: n.data?.subtype || 'text', label: n.data?.label || n.id, value: n.data?.value || '' }));
@@ -110,6 +162,7 @@ export async function collectInputValues(pipeline, dryRun, { promptFn = null, st
 
   const askFn = promptFn || ((msg, def) => input({ message: msg, ...(def ? { default: def } : {}) }));
 
+  /** @type {Record<string, string>} */
   const values = {};
   for (const def of defs) {
     const label = def.label || def.id;
@@ -134,6 +187,10 @@ export async function collectInputValues(pipeline, dryRun, { promptFn = null, st
   return values;
 }
 
+/**
+ * @param {SecurityPolicy | null | undefined} securityPolicy
+ * @returns {string[]}
+ */
 function buildSecurityPolicyBlock(securityPolicy) {
   if (!securityPolicy) return [];
 
@@ -171,6 +228,13 @@ function buildSecurityPolicyBlock(securityPolicy) {
   return lines;
 }
 
+/**
+ * @param {Record<string, string>} resolvedInputs
+ * @param {string[]} outputNames
+ * @param {{ projectRoot: string, stepDirRel: string } | null | undefined} workspaceInfo
+ * @param {SecurityPolicy | null | undefined} securityPolicy
+ * @returns {string}
+ */
 export function buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPolicy) {
   const parts = [];
   if (workspaceInfo) {

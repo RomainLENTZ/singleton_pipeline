@@ -38,7 +38,8 @@ export function filesRouter(ctx) {
       filtered.sort();
       res.json({ root: ctx.root, files: filtered });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
     }
   });
 

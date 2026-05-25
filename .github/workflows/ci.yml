@@ -38,6 +38,9 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Build web bundle
         run: npm run build:web
 

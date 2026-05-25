@@ -4,6 +4,14 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10
 const ALLOWED_PERMISSION_MODES = new Set(['bypassPermissions']);
 const READ_ONLY_DENY_TOOLS = ['Write', 'Edit', 'Bash', 'NotebookEdit'];
 
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
+
+/**
+ * @param {Partial<SecurityPolicy>} [securityPolicy]
+ * @param {string} [permissionMode]
+ * @returns {string[]}
+ */
 export function buildClaudePermissionArgs(securityPolicy = {}, permissionMode = '') {
   // Legacy escape hatch: when permission_mode is explicitly set on the agent or
   // step, honor it as-is and skip the security_policy mapping. This preserves
@@ -37,6 +45,7 @@ export function buildClaudePermissionArgs(securityPolicy = {}, permissionMode = 
   return args;
 }
 
+/** @type {ProviderRunner} */
 export const claudeRunner = {
   id: 'claude',
   command: 'claude',
@@ -61,6 +70,7 @@ export const claudeRunner = {
 
     if (model) args.push('--model', model);
 
+    /** @type {any} */
     const raw = await new Promise((resolve, reject) => {
       const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
@@ -93,7 +103,8 @@ export const claudeRunner = {
         try {
           resolve(JSON.parse(stdout));
         } catch (err) {
-          reject(new Error(`failed to parse claude output: ${err.message}\n${stdout.slice(0, 500)}`));
+          const message = err instanceof Error ? err.message : String(err);
+          reject(new Error(`failed to parse claude output: ${message}\n${stdout.slice(0, 500)}`));
         }
       });
 

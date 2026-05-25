@@ -5,6 +5,13 @@ const KV_LINE = /^\s*-\s+\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$/;
 const REQUIRED = ['id', 'description', 'inputs', 'outputs'];
 const LIST_KEYS = new Set(['inputs', 'outputs', 'tags', 'allowed_paths', 'blocked_paths']);
 
+/** @typedef {import('./types.js').AgentConfig} AgentConfig */
+
+/**
+ * @param {string} content
+ * @param {string} file
+ * @returns {{ agent: AgentConfig | null, error: string | null }}
+ */
 export function parseAgentFileDetailed(content, file) {
   // Strip YAML frontmatter if present
   const stripped = content.startsWith('---')
@@ -15,7 +22,8 @@ export function parseAgentFileDetailed(content, file) {
     return { agent: null, error: 'missing "## Config" section' };
   }
 
-  const afterConfig = stripped.slice(configMatch.index + configMatch[0].length);
+  const configStart = configMatch.index ?? 0;
+  const afterConfig = stripped.slice(configStart + configMatch[0].length);
 
   // Find end of config block: next ## header, ---, or EOF
   const nextHeader = afterConfig.match(/^##\s+/m);
@@ -24,6 +32,7 @@ export function parseAgentFileDetailed(content, file) {
   const endIdx = ends.length ? Math.min(...ends) : afterConfig.length;
 
   const configBlock = afterConfig.slice(0, endIdx);
+  /** @type {Record<string, string | string[]>} */
   const config = {};
   for (const line of configBlock.split('\n')) {
     const m = line.match(KV_LINE);
@@ -36,7 +45,8 @@ export function parseAgentFileDetailed(content, file) {
   }
 
   for (const k of REQUIRED) {
-    if (config[k] === undefined || (LIST_KEYS.has(k) && config[k].length === 0 && k !== 'tags')) {
+    const value = config[k];
+    if (value === undefined || (LIST_KEYS.has(k) && Array.isArray(value) && value.length === 0 && k !== 'tags')) {
       return { agent: null, error: `missing required field: ${k}` };
     }
   }
@@ -45,26 +55,31 @@ export function parseAgentFileDetailed(content, file) {
   const promptMatch = stripped.match(PROMPT_HEADER);
   let prompt = '';
   if (promptMatch) {
-    prompt = stripped.slice(promptMatch.index + promptMatch[0].length).trim();
+    const promptStart = promptMatch.index ?? 0;
+    prompt = stripped.slice(promptStart + promptMatch[0].length).trim();
   } else {
     const hrAll = stripped.match(HR);
-    if (hrAll) prompt = stripped.slice(hrAll.index + hrAll[0].length).trim();
+    if (hrAll) {
+      const hrStart = hrAll.index ?? 0;
+      prompt = stripped.slice(hrStart + hrAll[0].length).trim();
+    }
   }
 
+  /** @type {AgentConfig} */
   const agent = {
-    id: config.id,
-    description: config.description || '',
-    inputs: config.inputs || [],
-    outputs: config.outputs || [],
-    tags: config.tags || [],
-    provider: config.provider,
-    model: config.model,
-    runner_agent: config.runner_agent || config.opencode_agent,
-    opencode_agent: config.opencode_agent,
-    permission_mode: config.permission_mode,
-    security_profile: config.security_profile,
-    allowed_paths: config.allowed_paths || [],
-    blocked_paths: config.blocked_paths || [],
+    id: String(config.id),
+    description: String(config.description || ''),
+    inputs: Array.isArray(config.inputs) ? config.inputs : [],
+    outputs: Array.isArray(config.outputs) ? config.outputs : [],
+    tags: Array.isArray(config.tags) ? config.tags : [],
+    provider: typeof config.provider === 'string' ? /** @type {AgentConfig['provider']} */ (config.provider) : undefined,
+    model: typeof config.model === 'string' ? config.model : undefined,
+    runner_agent: typeof config.runner_agent === 'string' ? config.runner_agent : typeof config.opencode_agent === 'string' ? config.opencode_agent : undefined,
+    opencode_agent: typeof config.opencode_agent === 'string' ? config.opencode_agent : undefined,
+    permission_mode: typeof config.permission_mode === 'string' ? config.permission_mode : undefined,
+    security_profile: typeof config.security_profile === 'string' ? /** @type {AgentConfig['security_profile']} */ (config.security_profile) : undefined,
+    allowed_paths: Array.isArray(config.allowed_paths) ? config.allowed_paths : [],
+    blocked_paths: Array.isArray(config.blocked_paths) ? config.blocked_paths : [],
     estimated_tokens: config.estimated_tokens ? Number(config.estimated_tokens) : undefined,
     file,
     prompt
@@ -73,6 +88,11 @@ export function parseAgentFileDetailed(content, file) {
   return { agent, error: null };
 }
 
+/**
+ * @param {string} content
+ * @param {string} file
+ * @returns {AgentConfig | null}
+ */
 export function parseAgentFile(content, file) {
   return parseAgentFileDetailed(content, file).agent;
 }

@@ -7,6 +7,15 @@ import { findUsage, safeJsonParse } from './_shared.js';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
+/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
+
+/**
+ * @param {string} systemPrompt
+ * @param {string} userPrompt
+ * @param {string} [projectInstructions]
+ * @returns {string}
+ */
 function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
   const parts = ['Follow the system instructions exactly.', ''];
 
@@ -29,6 +38,10 @@ function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
   return parts.join('\n');
 }
 
+/**
+ * @param {Partial<SecurityPolicy>} [securityPolicy]
+ * @returns {string[]}
+ */
 export function buildCodexSandboxArgs(securityPolicy = {}) {
   const profile = securityPolicy.profile || 'workspace-write';
 
@@ -41,7 +54,11 @@ export function buildCodexSandboxArgs(securityPolicy = {}) {
   return ['--sandbox', 'workspace-write'];
 }
 
-export function buildCodexArgs({ prompt, model, outputFile, securityPolicy } = {}) {
+/**
+ * @param {{ prompt?: string, model?: string | null, outputFile?: string, securityPolicy?: Partial<SecurityPolicy> }} [options]
+ * @returns {string[]}
+ */
+export function buildCodexArgs({ prompt, model, outputFile = '', securityPolicy } = {}) {
   const args = [
     'exec',
     '--json',
@@ -57,6 +74,7 @@ export function buildCodexArgs({ prompt, model, outputFile, securityPolicy } = {
   return args;
 }
 
+/** @type {ProviderRunner} */
 export const codexRunner = {
   id: 'codex',
   command: 'codex',
@@ -78,6 +96,7 @@ export const codexRunner = {
 
     const args = buildCodexArgs({ prompt, model, outputFile, securityPolicy });
 
+    /** @type {{ events: any[], stderr: string }} */
     const { events, stderr } = await new Promise((resolve, reject) => {
       const child = spawn('codex', args, {
         cwd,
