@@ -57,6 +57,7 @@ vi.mock('./runners/index.js', () => ({
 }));
 
 import { detectSnapshotChanges, runPipeline, validatePostRunChanges } from './executor.js';
+import { resolveLatestRunDir } from './executor/run-report.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AGENT = path.join(__dirname, '__fixtures__/agents/echo.md');
@@ -319,9 +320,31 @@ describe('runPipeline preflight', () => {
 
     await expect(runPipeline(file, { quiet: true })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'result.md'), 'utf8');
     expect(artifact).toBe('generated text');
+  });
+
+  it('resolves the latest run through the portable pointer when symlink creation is unavailable', async () => {
+    const file = await writePipeline(tmpRoot, 'latest-pointer', {
+      name: 'latest-pointer',
+      nodes: [],
+      steps: [
+        {
+          agent: 'echo',
+          agent_file: FIXTURE_AGENT,
+          security_profile: 'read-only',
+          inputs: { text: '$FILE:inputs/sample.md' },
+          outputs: { result: '$FILE:.singleton/output/result.md' },
+        },
+      ],
+    });
+
+    await expect(runPipeline(file, { quiet: true })).resolves.toBeUndefined();
+    await fs.rm(path.join(tmpRoot, '.singleton', 'runs', 'latest'), { recursive: true, force: true });
+    const latestRun = await resolveLatestRunDir(tmpRoot);
+    const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
+    expect(manifest.pipeline).toBe('latest-pointer');
   });
 
   it('escapes XML-like tags from $FILE inputs before sending the runner prompt', async () => {
@@ -413,7 +436,7 @@ describe('runPipeline preflight', () => {
 
     await expect(runPipeline(file, { quiet: true })).rejects.toThrow(/simulated runner failure/);
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.pipeline).toBe('failed-manifest');
     expect(manifest.status).toBe('failed');
@@ -444,7 +467,7 @@ describe('runPipeline preflight', () => {
       debugDecision: async () => 'skip',
     })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.pipeline).toBe('debug-skip');
     expect(manifest.stats.at(-1)).toMatchObject({
@@ -477,7 +500,7 @@ describe('runPipeline preflight', () => {
       }),
     })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     expect(path.basename(latestRun)).toMatch(/^DEBUG-/);
     const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'result.md'), 'utf8');
     expect(artifact).toBe('debug override seen');
@@ -519,7 +542,7 @@ describe('runPipeline preflight', () => {
       debugPostDecision: async () => 'abort',
     })).rejects.toThrow(/output review/);
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.pipeline).toBe('debug-output-abort');
     expect(manifest.status).toBe('failed');
@@ -554,7 +577,7 @@ describe('runPipeline preflight', () => {
       debugPostDecision: async () => 'continue',
     })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     const stepStats = manifest.stats.at(-1);
     expect(stepStats.outputWarnings).toEqual([
@@ -602,7 +625,7 @@ describe('runPipeline preflight', () => {
       },
     })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const artifact = await fs.readFile(path.join(latestRun, '01-echo', 'attempt-2', 'result.md'), 'utf8');
     expect(artifact).toBe('debug override seen');
     await expect(fs.access(path.join(latestRun, '01-echo', 'attempt-1', 'result.md'))).resolves.toBeUndefined();
@@ -682,7 +705,7 @@ describe('runPipeline preflight', () => {
       },
     })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const downstreamArtifact = await fs.readFile(path.join(latestRun, '02-echo-next', 'second.md'), 'utf8');
     const pipelineJson = await fs.readFile(file, 'utf8');
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
@@ -725,7 +748,7 @@ describe('runPipeline preflight', () => {
       }),
     })).rejects.toThrow(/Replay limit reached/);
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.status).toBe('failed');
     expect(manifest.stats.at(-1)).toMatchObject({
@@ -768,7 +791,7 @@ describe('runPipeline preflight', () => {
       },
     })).resolves.toBeUndefined();
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const restoredProjectFile = await fs.readFile(path.join(tmpRoot, 'src', 'unexpected.js'), 'utf8');
     const finalArtifact = await fs.readFile(path.join(latestRun, '01-echo', 'attempt-2', 'result.md'), 'utf8');
 
@@ -853,7 +876,7 @@ describe('runPipeline preflight', () => {
       }),
     })).rejects.toThrow(/Replay restore incomplete/);
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const manifest = JSON.parse(await fs.readFile(path.join(latestRun, 'run-manifest.json'), 'utf8'));
     expect(manifest.status).toBe('failed');
     expect(manifest.error.message).toMatch(/src\/large\.txt/);
@@ -880,7 +903,7 @@ describe('runPipeline preflight', () => {
 
     await expect(runPipeline(file, { quiet: true })).rejects.toThrow(/invalid JSON/);
 
-    const latestRun = await fs.realpath(path.join(tmpRoot, '.singleton', 'runs', 'latest'));
+    const latestRun = await resolveLatestRunDir(tmpRoot);
     const raw = await fs.readFile(path.join(latestRun, '01-echo', 'raw-output.md'), 'utf8');
     expect(raw).toContain('Invalid $FILES JSON');
     expect(raw).toContain('not json');

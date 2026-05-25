@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { S } from '../shell.js';
+import { G, S } from '../shell.js';
+
+export const LATEST_RUN_ID_FILE = 'latest-run-id';
 
 function visibleLength(s) {
   return String(s || '').replace(/\{[^}]+\}/g, '').length;
@@ -17,11 +19,15 @@ function formatSeconds(value) {
 }
 
 function formatCost(value) {
-  return value > 0 ? `$${value.toFixed(4)}` : '—';
+  return value > 0 ? `$${value.toFixed(4)}` : '-';
 }
 
 function formatTurns(value) {
-  return value > 0 ? String(value) : '—';
+  return value > 0 ? String(value) : '-';
+}
+
+function displayValue(value) {
+  return !value || value === '—' ? '-' : value;
 }
 
 // Status → color. Only the Status cell is coloured; the rest of the row stays white
@@ -43,7 +49,7 @@ function sectionHeader(title) {
   return [
     '',
     '',
-    `{${S.subtle}-fg}${'─'.repeat(left)}{/}{${S.accent}-fg}{bold}${text}{/}{${S.subtle}-fg}${'─'.repeat(right)}{/}`,
+    `{${S.subtle}-fg}${G.hline.repeat(left)}{/}{${S.accent}-fg}{bold}${text}{/}{${S.subtle}-fg}${G.hline.repeat(right)}{/}`,
     '',
   ];
 }
@@ -57,9 +63,9 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   const rows = stats.map((s, i) => ({
     step: String(i + 1),
     agent: s.agent,
-    model: s.model || '—',
+    model: displayValue(s.model),
     status: s.status,
-    time: s.status === 'dry-run' || s.status === 'skipped' ? '—' : formatSeconds(s.seconds),
+    time: s.status === 'dry-run' || s.status === 'skipped' ? '-' : formatSeconds(s.seconds),
     cost: formatCost(s.cost),
   }));
 
@@ -67,7 +73,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   const totalRow = {
     step: '',
     agent: 'TOTAL',
-    model: '—',
+    model: '-',
     status: finalStatus,
     time: formatSeconds(totalSeconds),
     cost: formatCost(totalCost),
@@ -84,13 +90,13 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   };
 
   const hr = [
-    '─'.repeat(widths.step + 2),
-    '─'.repeat(widths.agent + 2),
-    '─'.repeat(widths.model + 2),
-    '─'.repeat(widths.status + 2),
-    '─'.repeat(widths.time + 2),
-    '─'.repeat(widths.cost + 2),
-  ].join(`{${S.subtle}-fg}┼{/}`);
+    G.hline.repeat(widths.step + 2),
+    G.hline.repeat(widths.agent + 2),
+    G.hline.repeat(widths.model + 2),
+    G.hline.repeat(widths.status + 2),
+    G.hline.repeat(widths.time + 2),
+    G.hline.repeat(widths.cost + 2),
+  ].join(`{${S.subtle}-fg}${G.cross}{/}`);
 
   // Bold each cell individually because `{/}` from the separator would reset a row-level bold.
   function row(r, { bold = false, colorStatus = false } = {}) {
@@ -107,7 +113,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
       ` ${statusCell} `,
       ` ${b}${padVisible(r.time, widths.time, 'right')}${bClose} `,
       ` ${b}${padVisible(r.cost, widths.cost, 'right')}${bClose} `,
-    ].join(`{${S.subtle}-fg}│{/}`);
+    ].join(`{${S.subtle}-fg}${G.vline}{/}`);
   }
 
   const lines = [
@@ -186,4 +192,37 @@ export async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fi
   };
 
   await fs.writeFile(path.join(runDir, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
+}
+
+export async function writeLatestRunPointer({ cwd, runId }) {
+  const runsDir = path.join(cwd, '.singleton', 'runs');
+  await fs.mkdir(runsDir, { recursive: true });
+  await fs.writeFile(path.join(runsDir, LATEST_RUN_ID_FILE), `${runId}\n`);
+
+  const latest = path.join(runsDir, 'latest');
+  try {
+    const stat = await fs.lstat(latest);
+    if (stat.isSymbolicLink() || stat.isFile()) await fs.unlink(latest);
+  } catch {
+    // Missing or non-removable legacy pointer is non-critical.
+  }
+  try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical on Windows */ }
+}
+
+export async function resolveLatestRunDir(root) {
+  const runsDir = path.join(root, '.singleton', 'runs');
+  const pointer = path.join(runsDir, LATEST_RUN_ID_FILE);
+
+  try {
+    const runId = (await fs.readFile(pointer, 'utf8')).trim();
+    if (runId && !runId.includes('/') && !runId.includes('\\')) {
+      const runDir = path.join(runsDir, runId);
+      await fs.access(path.join(runDir, 'run-manifest.json'));
+      return runDir;
+    }
+  } catch {
+    // Fall back to legacy symlink path below.
+  }
+
+  return path.join(runsDir, 'latest');
 }

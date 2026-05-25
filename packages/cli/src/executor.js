@@ -37,6 +37,7 @@ import {
 } from './executor/step-runner.js';
 import {
   renderRunSummary,
+  writeLatestRunPointer,
   writeRunManifest,
 } from './executor/run-report.js';
 import {
@@ -609,9 +610,7 @@ export async function runPipeline(filePath, opts = {}) {
       error: runError,
       debugEvents,
     });
-    const latest = path.join(cwd, '.singleton', 'runs', 'latest');
-    try { await fs.unlink(latest); } catch { /* missing is fine */ }
-    try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical */ }
+    await writeLatestRunPointer({ cwd, runId });
   }
 
   const combinedWrites = [];
