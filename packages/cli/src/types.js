@@ -40,6 +40,7 @@
  * @property {ProviderId=} provider
  * @property {string=} model
  * @property {string=} runner_agent
+ * @property {string=} opencode_agent
  * @property {string=} permission_mode
  * @property {SecurityProfile=} security_profile
  * @property {string[]=} allowed_paths
@@ -92,6 +93,39 @@
  * @property {string[]=} outputWarnings
  * @property {ParsedOutputSummary[]=} parsedOutputs
  * @property {string | null=} rawOutputPath
+ */
+
+/**
+ * @typedef {object} RunnerOptions
+ * @property {string} cwd
+ * @property {string=} projectRoot
+ * @property {string=} currentDir
+ * @property {string} systemPrompt
+ * @property {string} userPrompt
+ * @property {string | null=} model
+ * @property {string | null=} runnerAgent
+ * @property {string=} permissionMode
+ * @property {SecurityPolicy=} securityPolicy
+ * @property {number=} timeoutMs
+ */
+
+/**
+ * @typedef {object} RunnerResult
+ * @property {string} text
+ * @property {Record<string, unknown>} metadata
+ */
+
+/**
+ * @typedef {object} ProviderRunner
+ * @property {ProviderId} id
+ * @property {string} command
+ * @property {(options: RunnerOptions) => Promise<RunnerResult>} run
+ */
+
+/**
+ * @typedef {object} CommandResult
+ * @property {string} stdout
+ * @property {string} stderr
  */
 
 /**
