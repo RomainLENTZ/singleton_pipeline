@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseAgentFileDetailed } from '../parser.js';
+import { G } from '../shell.js';
 import { getRunner } from '../runners/index.js';
 import { discoverCodexProjectInstructions } from '../runners/codex-instructions.js';
 import {
@@ -9,8 +10,15 @@ import {
   resolveSecurityPolicyWithConfig,
   validateSecurityPolicy,
 } from '../security/policy.js';
-import { parsePipeRef, resolveFileGlob } from './inputs.js';
+import { buildUserMessage, escapePromptXml, parsePipeRef, resolveFileGlob } from './inputs.js';
 import { isSingletonInternalPath } from './outputs.js';
+
+const WINDOWS_ARGV_PROMPT_WARN_BYTES = 24 * 1024;
+// Hard block threshold: past this, the prompt is very likely to crash the
+// provider on Windows (CMD/CreateProcess ~32 KiB ceiling, Copilot documents
+// ~32 KiB). We refuse to start the pipeline rather than let it fail mid-run
+// with an opaque ENAMETOOLONG/EINVAL surfacing from the spawn syscall.
+const WINDOWS_ARGV_PROMPT_BLOCK_BYTES = 28 * 1024;
 
 export function resolveProvider(step, agent) {
   return step.provider || agent.provider || 'claude';
@@ -197,11 +205,131 @@ function formatSecurityHighlight({ label, provider, permissionMode, securityPoli
   if (securityPolicy.profile === 'restricted-write') {
     parts.push(`allowed_paths ${securityPolicy.allowedPaths.join(', ') || '—'}`);
   }
-  return parts.join(' · ');
+  return parts.join(` ${G.bullet} `);
 }
 
 function shouldHighlightSecurity({ provider, permissionMode, securityPolicy }) {
   return securityPolicy.profile !== 'workspace-write' || (provider === 'claude' && Boolean(permissionMode));
+}
+
+function wrapProviderPromptEstimate(provider, { runnerAgent, systemPrompt, userMessage }) {
+  if (provider === 'claude') return systemPrompt;
+  if (provider === 'copilot') return runnerAgent
+    ? userMessage
+    : ['<system>', systemPrompt, '</system>', '', '<user>', userMessage, '</user>', ''].join('\n');
+  if (provider === 'opencode') {
+    return ['<system>', systemPrompt, '</system>', '', '<user>', userMessage, '</user>', ''].join('\n');
+  }
+  return '';
+}
+
+async function estimateResolvedInputsForArgv(step, { cwd, inputValues, inputDefs }) {
+  const resolved = {};
+  for (const [name, spec] of Object.entries(step.inputs || {})) {
+    if (typeof spec !== 'string') {
+      resolved[name] = escapePromptXml(spec);
+      continue;
+    }
+    if (spec.startsWith('$PIPE:')) {
+      resolved[name] = `(pipeline output reference: ${spec.slice('$PIPE:'.length).trim()})`;
+      continue;
+    }
+    if (spec.startsWith('$INPUT:')) {
+      const id = spec.slice('$INPUT:'.length).trim();
+      const val = inputValues[id];
+      const def = inputDefs.find((item) => item.id === id);
+      if (def?.subtype === 'file' && val && !String(val).startsWith('(')) {
+        resolved[name] = await estimateFilePromptBlock(`$FILE:${val}`, cwd);
+      } else {
+        resolved[name] = escapePromptXml(val || `(input not provided: ${id})`);
+      }
+      continue;
+    }
+    if (spec.startsWith('$FILE:')) {
+      resolved[name] = await estimateFilePromptBlock(spec, cwd);
+      continue;
+    }
+    resolved[name] = escapePromptXml(spec);
+  }
+  return resolved;
+}
+
+async function estimateFilePromptBlock(spec, cwd) {
+  const files = await resolveFileGlob(spec, cwd);
+  if (files.length === 0) return `(no files matched: ${spec})`;
+  return files.map((file) => {
+    const relPath = path.relative(cwd, file.path).split(path.sep).join('/');
+    return `<file path="${relPath}" source="user" content_escaped="true">\n${escapePromptXml(file.content)}\n</file>`;
+  }).join('\n\n');
+}
+
+function findBiggestInputContributor(resolvedInputs) {
+  let topName = null;
+  let topBytes = 0;
+  for (const [name, value] of Object.entries(resolvedInputs)) {
+    const bytes = Buffer.byteLength(String(value ?? ''), 'utf8');
+    if (bytes > topBytes) {
+      topBytes = bytes;
+      topName = name;
+    }
+  }
+  return topName ? { name: topName, bytes: topBytes } : null;
+}
+
+export async function getWindowsArgvPromptCheck({
+  platform = process.platform,
+  label,
+  provider,
+  runnerAgent,
+  step,
+  agent,
+  cwd,
+  inputValues,
+  inputDefs,
+  securityPolicy,
+}) {
+  if (platform !== 'win32') return null;
+  if (!['claude', 'copilot', 'opencode'].includes(provider)) return null;
+
+  const systemPrompt = agent.prompt || agent.description || '';
+  const outputNames = Object.keys(step.outputs || {});
+  const resolvedInputs = await estimateResolvedInputsForArgv(step, { cwd, inputValues, inputDefs });
+  const userMessage = buildUserMessage(
+    resolvedInputs,
+    outputNames,
+    { projectRoot: cwd, stepDirRel: `.singleton/runs/<run-id>/<step-${label}>` },
+    securityPolicy
+  );
+  const argvPrompt = wrapProviderPromptEstimate(provider, { runnerAgent, systemPrompt, userMessage });
+  const bytes = Buffer.byteLength(argvPrompt, 'utf8');
+  if (bytes <= WINDOWS_ARGV_PROMPT_WARN_BYTES) return null;
+
+  const topContributor = findBiggestInputContributor(resolvedInputs);
+  const sizeLabel = `${Math.round(bytes / 1024)} KiB prompt argument`;
+  const inputHint = topContributor
+    ? ` Biggest contributor: input "${topContributor.name}" (~${Math.round(topContributor.bytes / 1024)} KiB).`
+    : '';
+
+  if (bytes >= WINDOWS_ARGV_PROMPT_BLOCK_BYTES) {
+    return {
+      level: 'error',
+      message: `${label} would exceed the Windows command-line ceiling for provider "${provider}" (${sizeLabel}, hard limit ~${Math.round(WINDOWS_ARGV_PROMPT_BLOCK_BYTES / 1024)} KiB).${inputHint} Shrink the input or move the large content to a $FILE: reference.`,
+    };
+  }
+
+  return {
+    level: 'warning',
+    message: `${label} may exceed Windows command-line length limits for provider "${provider}" (${sizeLabel}).${inputHint} Prefer smaller inputs or a provider path that uses stdin/files.`,
+  };
+}
+
+// Back-compat shim: older callers expect a plain message string. Returns the
+// `.message` of the structured check, regardless of level. Prefer the new
+// `getWindowsArgvPromptCheck` for callers that need to distinguish warning
+// from error.
+export async function getWindowsArgvPromptWarning(args) {
+  const check = await getWindowsArgvPromptCheck(args);
+  return check ? check.message : null;
 }
 
 function commandExists(command) {
@@ -223,7 +351,7 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
 
   if (securityConfig) {
     const relConfig = path.relative(cwd, securityConfig.file);
-    infos.push(`Project security config: ${relConfig} · default_profile "${securityConfig.defaultProfile}".`);
+    infos.push(`Project security config: ${relConfig} ${G.bullet} default_profile "${securityConfig.defaultProfile}".`);
   }
 
   for (const def of inputDefs) {
@@ -348,7 +476,7 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
       const opencodeRuntime = [
         model ? `model "${model}"` : null,
         runnerAgent ? `runner_agent "${runnerAgent}"` : 'default agent',
-      ].filter(Boolean).join(' · ');
+      ].filter(Boolean).join(` ${G.bullet} `);
       infos.push(`${label} runs OpenCode${opencodeRuntime ? ` with ${opencodeRuntime}` : ''}.`);
       if (runnerAgent) {
         const projectAgentProfile = await findOpenCodeProjectAgentProfile(cwd, runnerAgent);
@@ -376,6 +504,21 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
     }
     if (shouldHighlightSecurity({ provider, permissionMode, securityPolicy })) {
       securityHighlights.push(formatSecurityHighlight({ label, provider, permissionMode, securityPolicy }));
+    }
+    const argvCheck = await getWindowsArgvPromptCheck({
+      label,
+      provider,
+      runnerAgent,
+      step,
+      agent,
+      cwd,
+      inputValues,
+      inputDefs,
+      securityPolicy,
+    });
+    if (argvCheck) {
+      if (argvCheck.level === 'error') errors.push(argvCheck.message);
+      else warnings.push(argvCheck.message);
     }
 
     for (const [name, spec] of Object.entries(step.inputs || {})) {

@@ -58,6 +58,7 @@ vi.mock('./runners/index.js', () => ({
 
 import { detectSnapshotChanges, runPipeline, validatePostRunChanges } from './executor.js';
 import { resolveLatestRunDir } from './executor/run-report.js';
+import { getWindowsArgvPromptCheck, getWindowsArgvPromptWarning } from './executor/preflight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_AGENT = path.join(__dirname, '__fixtures__/agents/echo.md');
@@ -385,6 +386,77 @@ describe('runPipeline preflight', () => {
     });
 
     await expect(runPipeline(file, { quiet: true, nonInteractive: true })).rejects.toThrow(/Missing non-interactive input "brief"/);
+  });
+
+  it('warns for oversized Windows argv prompts on providers that pass prompts as arguments', async () => {
+    const check = await getWindowsArgvPromptCheck({
+      platform: 'win32',
+      label: 'Step 1 "writer"',
+      provider: 'copilot',
+      runnerAgent: null,
+      step: {
+        inputs: { text: '$INPUT:brief' },
+        outputs: { result: '$FILE:.singleton/output/result.md' },
+      },
+      agent: {
+        description: 'Writes code',
+        prompt: 'Follow instructions.',
+      },
+      cwd: tmpRoot,
+      inputValues: { brief: 'x'.repeat(25 * 1024) },
+      inputDefs: [{ id: 'brief', subtype: 'text' }],
+      securityPolicy: { profile: 'workspace-write', allowedPaths: [], blockedPaths: [] },
+    });
+
+    expect(check).toMatchObject({ level: 'warning' });
+    expect(check.message).toMatch(/Windows command-line length/);
+    expect(check.message).toMatch(/Biggest contributor: input "text"/);
+  });
+
+  it('blocks oversized Windows argv prompts past the hard ceiling', async () => {
+    const check = await getWindowsArgvPromptCheck({
+      platform: 'win32',
+      label: 'Step 1 "writer"',
+      provider: 'copilot',
+      runnerAgent: null,
+      step: {
+        inputs: { text: '$INPUT:brief' },
+        outputs: { result: '$FILE:.singleton/output/result.md' },
+      },
+      agent: {
+        description: 'Writes code',
+        prompt: 'Follow instructions.',
+      },
+      cwd: tmpRoot,
+      inputValues: { brief: 'x'.repeat(35 * 1024) },
+      inputDefs: [{ id: 'brief', subtype: 'text' }],
+      securityPolicy: { profile: 'workspace-write', allowedPaths: [], blockedPaths: [] },
+    });
+
+    expect(check).toMatchObject({ level: 'error' });
+    expect(check.message).toMatch(/would exceed the Windows command-line ceiling/);
+    expect(check.message).toMatch(/hard limit ~28 KiB/);
+    expect(check.message).toMatch(/Biggest contributor: input "text"/);
+  });
+
+  it('keeps the legacy getWindowsArgvPromptWarning shim returning the message string', async () => {
+    const message = await getWindowsArgvPromptWarning({
+      platform: 'win32',
+      label: 'Step 1 "writer"',
+      provider: 'copilot',
+      runnerAgent: null,
+      step: {
+        inputs: { text: '$INPUT:brief' },
+        outputs: { result: '$FILE:.singleton/output/result.md' },
+      },
+      agent: { description: 'd', prompt: 'p' },
+      cwd: tmpRoot,
+      inputValues: { brief: 'x'.repeat(25 * 1024) },
+      inputDefs: [{ id: 'brief', subtype: 'text' }],
+      securityPolicy: { profile: 'workspace-write', allowedPaths: [], blockedPaths: [] },
+    });
+
+    expect(message).toMatch(/Windows command-line length/);
   });
 
   it('escapes XML-like tags from $FILE inputs before sending the runner prompt', async () => {
