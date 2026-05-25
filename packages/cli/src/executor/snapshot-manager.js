@@ -20,6 +20,13 @@ export const SNAPSHOT_SKIP_DIRS = new Set([
 export const SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
 const SNAPSHOT_BINARY_PROBE_BYTES = 8192;
 
+// All relPaths exposed by this module use POSIX separators ('/'), so that
+// run manifests, restore reports and diffs stay portable across OSes.
+// path.join still accepts '/' on win32, so fs operations remain correct.
+function toPosix(p) {
+  return String(p || '').split(path.sep).join('/');
+}
+
 function runCommand(cmd, args, { cwd }) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -51,7 +58,7 @@ export async function snapshotProjectFiles(root, rel = '', out = new Map()) {
     const entryRel = path.join(rel, entry.name);
     const entryAbs = path.join(root, entryRel);
     const stat = await fs.stat(entryAbs);
-    out.set(entryRel, `${stat.size}:${Math.floor(stat.mtimeMs)}`);
+    out.set(toPosix(entryRel), `${stat.size}:${Math.floor(stat.mtimeMs)}`);
   }
   return out;
 }
@@ -102,8 +109,9 @@ function parseGitStatusPorcelain(raw) {
     const record = records[i];
     if (record.length < 4) continue;
     const status = record.slice(0, 2);
-    const relPath = record.slice(3).split('/').join(path.sep);
-    const topLevel = relPath.split(path.sep)[0];
+    // git porcelain always emits forward slashes; keep them as the canonical form.
+    const relPath = record.slice(3);
+    const topLevel = relPath.split('/')[0];
     if (SNAPSHOT_SKIP_DIRS.has(topLevel)) {
       if (status[0] === 'R' || status[0] === 'C') i += 1;
       continue;
@@ -175,7 +183,7 @@ async function collectSnapshotCandidates(root, rel = '', out = []) {
     } catch {
       continue;
     }
-    out.push({ relPath: entryRel, absPath: entryAbs, size });
+    out.push({ relPath: toPosix(entryRel), absPath: entryAbs, size });
   }
   return out;
 }

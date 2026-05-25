@@ -88,7 +88,8 @@ export async function resolveInput(spec, { registry, cwd, inputValues = {}, inpu
     const files = await resolveFileGlob(spec, cwd);
     if (files.length === 0) return `(no files matched: ${spec})`;
     return files.map((f) => {
-      const relPath = escapePromptXmlAttribute(path.relative(cwd, f.path));
+      // Always expose POSIX-style paths in the prompt so agents see portable references.
+      const relPath = escapePromptXmlAttribute(path.relative(cwd, f.path).split(path.sep).join('/'));
       const content = escapePromptXml(f.content);
       return `<file path="${relPath}" source="user" content_escaped="true">\n${content}\n</file>`;
     }).join('\n\n');
