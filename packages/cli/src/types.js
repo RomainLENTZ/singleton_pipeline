@@ -24,6 +24,10 @@
  */
 
 /**
+ * @typedef {AgentConfig & { source: string }} DiscoveredAgent
+ */
+
+/**
  * @typedef {object} SecurityPolicy
  * @property {SecurityProfile} profile
  * @property {string[]} allowedPaths
@@ -62,6 +66,39 @@
  * @property {string} relPath
  * @property {string} kind
  * @property {number=} bytes
+ */
+
+/**
+ * @typedef {object} ParsedOutputSummary
+ * @property {string} name
+ * @property {boolean} found
+ * @property {number} chars
+ * @property {number} lines
+ */
+
+/**
+ * @typedef {object} RunStat
+ * @property {string} agent
+ * @property {ProviderId | 'system'=} provider
+ * @property {string=} model
+ * @property {string=} runnerAgent
+ * @property {SecurityProfile=} securityProfile
+ * @property {string=} permissionMode
+ * @property {string} status
+ * @property {number=} seconds
+ * @property {number=} turns
+ * @property {number=} cost
+ * @property {number=} attempts
+ * @property {string[]=} outputWarnings
+ * @property {ParsedOutputSummary[]=} parsedOutputs
+ * @property {string | null=} rawOutputPath
+ */
+
+/**
+ * @typedef {object} DebugEvent
+ * @property {string} [type]
+ * @property {string} [message]
+ * @property {Record<string, unknown>} [data]
  */
 
 /**

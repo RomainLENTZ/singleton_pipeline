@@ -9,7 +9,9 @@
     "packages/cli/src/parser.js",
     "packages/cli/src/executor/inputs.js",
     "packages/cli/src/executor/outputs.js",
+    "packages/cli/src/executor/run-report.js",
     "packages/cli/src/executor/run-setup.js",
+    "packages/cli/src/scanner.js",
     "packages/cli/src/security/policy.js",
     "packages/server/src/routes/files.js"
   ]
