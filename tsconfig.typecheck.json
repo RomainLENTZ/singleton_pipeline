@@ -16,7 +16,7 @@
     "packages/cli/src/parser.ts",
     "packages/cli/src/executor.js",
     "packages/cli/src/executor/debug-loop.js",
-    "packages/cli/src/executor/inputs.js",
+    "packages/cli/src/executor/inputs.ts",
     "packages/cli/src/executor/outputs.ts",
     "packages/cli/src/executor/preflight.js",
     "packages/cli/src/executor/replay-loop.js",
