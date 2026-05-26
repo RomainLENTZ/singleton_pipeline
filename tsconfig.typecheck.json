@@ -53,6 +53,7 @@
     "packages/cli/src/executor/snapshot-manager.test.js",
     "packages/cli/src/executor.test.js",
     "packages/cli/src/security/policy.test.js",
+    "packages/cli/src/runners/opencode.ts",
     "packages/server/src/routes/files.test.js",
     "packages/cli/src/runners/opencode.test.js",
     "packages/web/src/composables/usePipeline.test.js"
