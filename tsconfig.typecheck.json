@@ -22,7 +22,7 @@
     "packages/cli/src/executor/replay-loop.js",
     "packages/cli/src/executor/run-report.ts",
     "packages/cli/src/executor/run-setup.ts",
-    "packages/cli/src/executor/security-review.js",
+    "packages/cli/src/executor/security-review.ts",
     "packages/cli/src/executor/snapshot-manager.ts",
     "packages/cli/src/executor/step-runner.js",
     "packages/cli/src/scanner.ts",
