@@ -32,6 +32,7 @@ export type SecurityPolicy = {
 
 export type PipelineStep = {
   agent: string;
+  agent_file?: string;
   provider?: ProviderId;
   model?: string;
   runner_agent?: string;
@@ -42,6 +43,7 @@ export type PipelineStep = {
   blocked_paths?: string[];
   inputs?: Record<string, string>;
   outputs?: Record<string, string>;
+  require_changes?: boolean;
 };
 
 export type PipelineConfig = {
