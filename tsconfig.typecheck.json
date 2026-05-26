@@ -45,6 +45,7 @@
     "packages/cli/src/runners/codex.ts",
     "packages/cli/src/runners/codex-instructions.ts",
     "packages/cli/src/runners/codex-instructions.test.js",
+    "packages/cli/src/runners/copilot.ts",
     "packages/cli/src/runners/codex.test.js",
     "packages/cli/src/runners/copilot.test.js",
     "packages/cli/src/executor/inputs.test.js",
