@@ -8,10 +8,12 @@
     "rootDir": "."
   },
   "include": [
+    "packages/cli/src/**/*.ts",
     "packages/cli/src/**/*.js",
     "packages/server/src/**/*.js"
   ],
   "exclude": [
+    "packages/cli/src/**/*.test.ts",
     "packages/cli/src/**/*.test.js",
     "packages/server/src/**/*.test.js",
     "packages/cli/src/__fixtures__/**"

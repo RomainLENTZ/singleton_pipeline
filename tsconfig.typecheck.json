@@ -5,7 +5,7 @@
     "noImplicitAny": false
   },
   "include": [
-    "packages/cli/src/types.js",
+    "packages/cli/src/types.ts",
     "packages/cli/src/shell.js",
     "packages/cli/src/theme.js",
     "packages/cli/src/timeline.js",
