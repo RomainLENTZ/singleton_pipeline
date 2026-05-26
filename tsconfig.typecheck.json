@@ -11,7 +11,7 @@
     "packages/cli/src/timeline.ts",
     "packages/cli/src/index.ts",
     "packages/cli/src/vendor.d.ts",
-    "packages/cli/src/commands/new.js",
+    "packages/cli/src/commands/new.ts",
     "packages/cli/src/commands/repl.js",
     "packages/cli/src/parser.ts",
     "packages/cli/src/executor.ts",
