@@ -125,6 +125,7 @@ export type TimelineController = {
   log(text: string): void;
   logMuted(text: string): void;
   logSuccess(text: string): void;
+  logError(text: string): void;
   logDiffLine(line: string): void;
   end(): void;
 };

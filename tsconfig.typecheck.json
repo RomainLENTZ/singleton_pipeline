@@ -8,7 +8,7 @@
     "packages/cli/src/types.ts",
     "packages/cli/src/shell.js",
     "packages/cli/src/theme.ts",
-    "packages/cli/src/timeline.js",
+    "packages/cli/src/timeline.ts",
     "packages/cli/src/index.js",
     "packages/cli/src/vendor.d.ts",
     "packages/cli/src/commands/new.js",

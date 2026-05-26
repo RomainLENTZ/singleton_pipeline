@@ -1,17 +1,31 @@
 import blessed from 'blessed';
 import { ASCII_MODE, G, S } from './shell.js';
+import type { TimelineController } from './types.js';
 
 const FRAMES = ASCII_MODE ? ['|', '/', '-', '\\'] : ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
 
-function stripBlessedTags(s) {
+type Status = 'pending' | 'running' | 'paused' | 'done' | 'error';
+
+type TimelineWidgets = {
+  screen: any;
+  logPanel: any;
+  statusBox: any;
+  setLabel?: ((text: string) => void) | null;
+  mirror?: ((text: string) => void) | null;
+};
+
+function stripBlessedTags(s: unknown): string {
   return String(s || '').replace(/\{[^}]+\}/g, '');
 }
 
-export function createPlainTimeline(stepNames, { log = console.log } = {}) {
-  const statuses = stepNames.map(() => 'pending');
+export function createPlainTimeline(
+  stepNames: string[],
+  { log = console.log }: { log?: (text: string) => void } = {}
+): TimelineController {
+  const statuses = stepNames.map(() => 'pending' as Status);
   const meta = stepNames.map(() => '');
 
-  function line(index, status, info = '') {
+  function line(index: number, status: Status, info = ''): string {
     const label = stepNames[index] || `step ${index + 1}`;
     const suffix = info ? ` - ${info}` : '';
     return `[${status}] ${label}${suffix}`;
@@ -50,15 +64,20 @@ export function createPlainTimeline(stepNames, { log = console.log } = {}) {
 
 // widgets: { screen, logPanel, statusBox } — provided by shell when running inside the TUI.
 // If omitted, a standalone blessed screen is created.
-export function createTimeline(stepNames, widgets = null) {
+export function createTimeline(stepNames: string[], widgets: TimelineWidgets | null = null): TimelineController {
   const N = stepNames.length;
-  const statuses = stepNames.map(() => 'pending');
+  const statuses = stepNames.map(() => 'pending' as Status);
   const meta     = stepNames.map(() => '');
   let runningIdx = -1;
-  let spinnerInterval = null;
+  let spinnerInterval: ReturnType<typeof setInterval> | null = null;
   let spinnerFrame    = 0;
 
-  let screen, logPanel, statusBox, setLabel = null, mirror = null, ownScreen = false;
+  let screen: any;
+  let logPanel: any;
+  let statusBox: any;
+  let setLabel: ((text: string) => void) | null = null;
+  let mirror: ((text: string) => void) | null = null;
+  let ownScreen = false;
 
   if (widgets) {
     ({ screen, logPanel, statusBox, setLabel = null, mirror = null } = widgets);
@@ -96,7 +115,7 @@ export function createTimeline(stepNames, widgets = null) {
     screen.key(['C-c'], () => { screen.destroy(); process.exit(0); });
   }
 
-  function dot(status, frame = 0) {
+  function dot(status: Status | undefined, frame = 0): string {
     if (status === 'done')    return `{${S.success}-fg}${G.running}{/}`;
     if (status === 'running') return `{${S.text}-fg}${FRAMES[frame % FRAMES.length]}{/}`;
     if (status === 'paused')  return `{${S.warning}-fg}${G.running}{/}`;
@@ -104,7 +123,8 @@ export function createTimeline(stepNames, widgets = null) {
     return `{${S.subtle}-fg}${G.pending}{/}`;
   }
 
-  function shimmerName(text, frame = 0) {
+  function shimmerName(text: string | undefined, frame = 0): string {
+    text = text || '';
     const peak = frame % (text.length + 6);
     return text.split('').map((ch, i) => {
       const dist = Math.abs(i - peak);
@@ -116,11 +136,11 @@ export function createTimeline(stepNames, widgets = null) {
     }).join('');
   }
 
-  function compactDots(frame = 0) {
+  function compactDots(frame = 0): string {
     return stepNames.map((_name, i) => dot(statuses[i], frame)).join(`  {${S.subtle}-fg}${G.dash}{/}  `);
   }
 
-  function renderTimeline(frame = 0) {
+  function renderTimeline(frame = 0): void {
     const currentMeta = runningIdx >= 0 && meta[runningIdx]
       ? `  {${S.muted}-fg}${meta[runningIdx]}{/}`
       : '';
