@@ -7,7 +7,7 @@
   "include": [
     "packages/cli/src/types.ts",
     "packages/cli/src/shell.js",
-    "packages/cli/src/theme.js",
+    "packages/cli/src/theme.ts",
     "packages/cli/src/timeline.js",
     "packages/cli/src/index.js",
     "packages/cli/src/commands/new.js",
