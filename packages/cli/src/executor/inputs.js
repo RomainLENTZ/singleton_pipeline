@@ -4,7 +4,6 @@ import fg from 'fast-glob';
 import { input } from '@inquirer/prompts';
 
 /** @typedef {import('../types.js').InputDef} InputDef */
-/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
 /** @typedef {import('../types.js').PipelineStep} PipelineStep */
 /** @typedef {import('../types.js').PromptStyle} PromptStyle */
 /** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
@@ -146,7 +145,7 @@ export async function resolveInput(spec, { registry, cwd, inputValues = {}, inpu
 }
 
 /**
- * @param {PipelineConfig & { nodes?: Array<{ id: string, type: string, data?: { subtype?: string, label?: string, value?: string } }> }} pipeline
+ * @param {{ nodes?: Array<{ id: string, type: string, data?: { subtype?: string, label?: string, value?: string } }> }} pipeline
  * @param {boolean} dryRun
  * @param {{ promptFn?: ((message: string, defaultValue: string | null) => Promise<string>) | null, style?: PromptStyle | null, nonInteractive?: boolean }} [options]
  * @returns {Promise<Record<string, string>>}

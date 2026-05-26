@@ -18,6 +18,7 @@ import { ref } from 'vue';
 
 /**
  * @typedef {object} PipelineEdge
+ * @property {string=} id
  * @property {string} source
  * @property {string} target
  * @property {string=} sourceHandle

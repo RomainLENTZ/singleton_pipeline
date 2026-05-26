@@ -4,10 +4,18 @@ import { assertWriteAllowed, resolveSecurityPolicyWithConfig } from './policy.js
 
 const ROOT = '/repo';
 
+/**
+ * @param {{ profile?: import('../types.js').SecurityProfile, allowedPaths?: string[], blockedPaths?: string[] }} [options]
+ * @returns {import('../types.js').SecurityPolicy}
+ */
 function policy({ profile = 'workspace-write', allowedPaths = [], blockedPaths = [] } = {}) {
   return { profile, allowedPaths, blockedPaths };
 }
 
+/**
+ * @param {string} absTarget
+ * @param {import('../types.js').SecurityPolicy} policyObj
+ */
 function callAssert(absTarget, policyObj) {
   return assertWriteAllowed(absTarget, {
     root: ROOT,

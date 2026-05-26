@@ -35,6 +35,11 @@
     "packages/web/src/composables/useAgents.js",
     "packages/web/src/composables/useFiles.js",
     "packages/web/src/composables/usePipeline.js",
-    "packages/web/src/composables/useToast.js"
+    "packages/web/src/composables/useToast.js",
+    "packages/cli/src/parser.test.js",
+    "packages/cli/src/executor/inputs.test.js",
+    "packages/cli/src/security/policy.test.js",
+    "packages/cli/src/runners/opencode.test.js",
+    "packages/web/src/composables/usePipeline.test.js"
   ]
 }
