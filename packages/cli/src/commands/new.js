@@ -501,6 +501,10 @@ function renderForm(shell, { draft, activeField, currentStep, totalSteps, contex
 // Review render — same shape as renderForm but no active field marker, and a
 // concise header tailored to the confirmation step. The full target path is
 // shown in the prompt bar message, not duplicated here.
+/**
+ * @param {any} shell
+ * @param {{ draft: any, error?: string | null }} options
+ */
 function renderReview(shell, { draft, error = null }) {
   const lines = [];
   lines.push('');
@@ -670,6 +674,7 @@ export async function newAgentShellCommand({ root, shell }) {
   const absRoot = path.resolve(root || process.cwd());
   const context = await loadAgentCreationContext(absRoot);
 
+  /** @type {any} */
   const draft = {
     id: null, title: null, description: null,
     inputs: null, outputs: null, tags: null,
@@ -685,13 +690,14 @@ export async function newAgentShellCommand({ root, shell }) {
 
   // ── Confirm + write ────────────────────────────────────────────────────
   let targetDir = DEFAULT_AGENTS_DIR;
+  /** @type {string | null} */
   let confirmError = null;
 
   while (true) {
     renderReview(shell, { draft, error: confirmError });
     confirmError = null;
 
-    const fullPath = path.join(targetDir, draft.file);
+    const fullPath = path.join(targetDir, String(draft.file));
     // The prompt message itself carries the target path and the inline action
     // hints, so the form panel above stays clean and the user reads everything
     // in one place. Tagged content is rendered verbatim by updatePrompt.
@@ -730,7 +736,7 @@ export async function newAgentShellCommand({ root, shell }) {
 
     if (trimmed === '' || ['y', 'yes'].includes(trimmed.toLowerCase())) {
       const targetAbsDir = path.resolve(absRoot, targetDir);
-      const targetFile = path.join(targetAbsDir, draft.file);
+      const targetFile = path.join(targetAbsDir, String(draft.file));
 
       let exists = false;
       try { await fs.access(targetFile); exists = true; } catch {}

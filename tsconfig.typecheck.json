@@ -6,6 +6,12 @@
   },
   "include": [
     "packages/cli/src/types.js",
+    "packages/cli/src/shell.js",
+    "packages/cli/src/theme.js",
+    "packages/cli/src/timeline.js",
+    "packages/cli/src/index.js",
+    "packages/cli/src/commands/new.js",
+    "packages/cli/src/commands/repl.js",
     "packages/cli/src/parser.js",
     "packages/cli/src/executor.js",
     "packages/cli/src/executor/debug-loop.js",
@@ -20,6 +26,9 @@
     "packages/cli/src/executor/step-runner.js",
     "packages/cli/src/scanner.js",
     "packages/cli/src/security/policy.js",
-    "packages/server/src/routes/files.js"
+    "packages/server/src/index.js",
+    "packages/server/src/routes/agents.js",
+    "packages/server/src/routes/files.js",
+    "packages/server/src/routes/pipelines.js"
   ]
 }

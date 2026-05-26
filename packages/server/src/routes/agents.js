@@ -15,7 +15,7 @@ export function agentsRouter(ctx) {
         return res.json({ scannedAt: new Date().toISOString(), root: ctx.root, agents });
       }
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -24,7 +24,7 @@ export function agentsRouter(ctx) {
       const agents = await scanAgents(ctx.root);
       res.json({ scannedAt: new Date().toISOString(), root: ctx.root, agents });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 

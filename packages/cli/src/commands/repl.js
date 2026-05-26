@@ -289,6 +289,7 @@ export async function replCommand(opts) {
   const shell = createShell();
   const serveState = createServeState(shell);
 
+  /** @type {null | (() => void)} */
   let stopShimmer = await showWelcome(root, shell);
   await refreshFooter(root, shell);
 
@@ -323,7 +324,7 @@ export async function replCommand(opts) {
     } catch (err) {
       // Safety: if a command (typically /run) threw before resetting the border, reflect the error.
       shell.setMode?.('error');
-      shell.log(`{${S.error}-fg}✕{/} ${err.message}`);
+      shell.log(`{${S.error}-fg}✕{/} ${err instanceof Error ? err.message : String(err)}`);
     }
     shell.enableInput();
   });
@@ -420,7 +421,7 @@ function closeServer(server) {
         reject(err);
         return;
       }
-      resolve();
+      resolve(undefined);
     });
   });
 }
@@ -441,8 +442,9 @@ async function cmdServe(root, shell, serveState) {
       const urlMatch = String(message).match(/https?:\/\/\S+/);
       if (urlMatch) {
         const url = urlMatch[0];
-        const prefix = message.slice(0, urlMatch.index);
-        const suffix = message.slice(urlMatch.index + url.length);
+        const urlIndex = urlMatch.index ?? 0;
+        const prefix = message.slice(0, urlIndex);
+        const suffix = message.slice(urlIndex + url.length);
         shell.log(`{${S.text}-fg}{bold}${prefix}{/}{${S.string}-fg}${url}{/}{${S.muted}-fg}${suffix}{/}`);
         return;
       }
@@ -489,7 +491,7 @@ async function cmdCommitLast(root, shell) {
   try {
     securityConfig = await loadProjectSecurityConfig(root);
   } catch (err) {
-    shell.log(`{${S.error}-fg}✕{/} ${err.message}`);
+    shell.log(`{${S.error}-fg}✕{/} ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 

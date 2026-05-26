@@ -25,7 +25,7 @@ export function pipelinesRouter(ctx) {
       }))).filter(Boolean);
       res.json({ pipelines: items });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -56,7 +56,7 @@ export function pipelinesRouter(ctx) {
       await fs.writeFile(file, JSON.stringify(payload, null, 2));
       res.json({ ok: true, file: `${safe}.json`, ...payload });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
