@@ -37,8 +37,16 @@
     "packages/web/src/composables/usePipeline.js",
     "packages/web/src/composables/useToast.js",
     "packages/cli/src/parser.test.js",
+    "packages/cli/src/runners/claude.test.js",
+    "packages/cli/src/runners/codex-instructions.test.js",
+    "packages/cli/src/runners/codex.test.js",
+    "packages/cli/src/runners/copilot.test.js",
     "packages/cli/src/executor/inputs.test.js",
+    "packages/cli/src/executor/outputs.test.js",
+    "packages/cli/src/executor/snapshot-manager.test.js",
+    "packages/cli/src/executor.test.js",
     "packages/cli/src/security/policy.test.js",
+    "packages/server/src/routes/files.test.js",
     "packages/cli/src/runners/opencode.test.js",
     "packages/web/src/composables/usePipeline.test.js"
   ]

@@ -408,6 +408,7 @@ describe('runPipeline preflight', () => {
       securityPolicy: { profile: 'workspace-write', allowedPaths: [], blockedPaths: [] },
     });
 
+    if (!check) throw new Error('Expected Windows argv prompt check');
     expect(check).toMatchObject({ level: 'warning' });
     expect(check.message).toMatch(/Windows command-line length/);
     expect(check.message).toMatch(/Biggest contributor: input "text"/);
@@ -433,6 +434,7 @@ describe('runPipeline preflight', () => {
       securityPolicy: { profile: 'workspace-write', allowedPaths: [], blockedPaths: [] },
     });
 
+    if (!check) throw new Error('Expected Windows argv prompt check');
     expect(check).toMatchObject({ level: 'error' });
     expect(check.message).toMatch(/would exceed the Windows command-line ceiling/);
     expect(check.message).toMatch(/hard limit ~28 KiB/);
@@ -1030,6 +1032,10 @@ describe('Layer 3 — post-run snapshot diff catches violations without LLM coop
   // and produces violations. No LLM is involved here, only deterministic file
   // state comparison.
 
+  /**
+   * @param {string[]} [allowedPaths]
+   * @returns {import('./types.js').PipelineStep}
+   */
   function step(allowedPaths = ['src']) {
     return {
       agent: 'test-step',
