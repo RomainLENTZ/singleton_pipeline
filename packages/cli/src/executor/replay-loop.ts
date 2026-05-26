@@ -9,51 +9,79 @@ import {
   logDebugPromptPreview,
   pushDebugEvent,
 } from './debug-loop.js';
+import type {
+  DebugEvent,
+  FileWrite,
+  InputDef,
+  PipelineStep,
+  ProviderId,
+  RunStat,
+  SecurityPolicy,
+  SnapshotChange,
+  SnapshotManagerLike,
+  SnapshotState,
+  TimelineController,
+} from '../types.js';
+import type { StepSnapshot } from './snapshot-manager.js';
 
-/** @typedef {import('../types.js').InputDef} InputDef */
-/** @typedef {import('../types.js').FileWrite} FileWrite */
-/** @typedef {import('../types.js').PipelineStep} PipelineStep */
-/** @typedef {import('../types.js').ProviderId} ProviderId */
-/** @typedef {import('../types.js').RunStat} RunStat */
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
-/** @typedef {import('../types.js').SnapshotChange} SnapshotChange */
-/** @typedef {import('../types.js').SnapshotManagerLike} SnapshotManagerLike */
-/** @typedef {import('../types.js').SnapshotState} SnapshotState */
-/** @typedef {import('../types.js').TimelineController} TimelineController */
+type FinalAttempt = {
+  stepChanges?: SnapshotChange[];
+  stepWrites?: FileWrite[];
+} | null;
 
-/**
- * @param {object} options
- * @param {number} options.attempt
- * @param {{ stepChanges?: SnapshotChange[], stepWrites?: FileWrite[] } | null} options.finalAttempt
- * @param {{ snapshotDir: string, captured: Set<string>, skippedLarge: string[], skippedBinary: string[], skippedIgnored: string[] } | null} options.stepSnapshot
- * @param {SnapshotManagerLike & { restore: (options: { snapshot: any, originalPaths: Set<string>, changes: SnapshotChange[] }) => Promise<{ restored: string[], removed: string[], skipped: string[] }> }} options.snapshotManager
- * @param {Set<string>} options.stepOriginalPaths
- * @param {Map<string, string | undefined>} options.stepRegistrySnapshot
- * @param {Record<string, string>} options.registry
- * @param {Record<string, string>} options.replayInputs
- * @param {Record<string, string> | null} options.replayInputOverride
- * @param {PipelineStep} options.step
- * @param {any[]} options.debugEvents
- * @param {InputDef[]} options.inputDefs
- * @param {TimelineController} options.timeline
- * @param {any} options.shell
- * @param {string[]} options.outputNames
- * @param {(attempt: number) => { projectRoot: string, stepDirRel: string } | null} options.workspaceInfoForAttempt
- * @param {string} options.systemPrompt
- * @param {SecurityPolicy} options.securityPolicy
- * @param {Record<string, string>} options.debugInputOverrides
- * @param {SnapshotState | null} options.currentSnapshot
- * @param {RunStat[]} options.stats
- * @param {ProviderId | 'system'} options.provider
- * @param {string | null} options.model
- * @param {string | null} options.runnerAgent
- * @param {string} options.permissionMode
- * @param {number} options.totalAttemptSeconds
- * @param {number} options.totalAttemptTurns
- * @param {number} options.totalAttemptCost
- * @param {number} options.timelineIndex
- * @param {(timeline: TimelineController, timelineIndex: number, info: string, message: string) => never} options.failStep
- */
+type RestoringSnapshotManager = SnapshotManagerLike & {
+  restore(options: {
+    snapshot: StepSnapshot;
+    originalPaths: Set<string>;
+    changes: SnapshotChange[];
+  }): Promise<{ restored: string[], removed: string[], skipped: string[] }>;
+};
+
+type WorkspaceInfo = {
+  projectRoot: string;
+  stepDirRel: string;
+};
+
+type PrepareReplayAttemptOptions = {
+  attempt: number;
+  finalAttempt: FinalAttempt;
+  stepSnapshot: StepSnapshot | null;
+  snapshotManager: RestoringSnapshotManager;
+  stepOriginalPaths: Set<string>;
+  stepRegistrySnapshot: Map<string, string | undefined>;
+  registry: Record<string, string>;
+  replayInputs: Record<string, string>;
+  replayInputOverride: Record<string, string> | null;
+  step: PipelineStep;
+  debugEvents: DebugEvent[];
+  inputDefs: InputDef[];
+  timeline: TimelineController;
+  shell: any;
+  outputNames: string[];
+  workspaceInfoForAttempt(attempt: number): WorkspaceInfo | null;
+  systemPrompt: string;
+  securityPolicy: SecurityPolicy;
+  debugInputOverrides: Record<string, string>;
+  currentSnapshot: SnapshotState | null;
+  stats: RunStat[];
+  provider: ProviderId | 'system';
+  model: string | null;
+  runnerAgent: string | null;
+  permissionMode: string;
+  totalAttemptSeconds: number;
+  totalAttemptTurns: number;
+  totalAttemptCost: number;
+  timelineIndex: number;
+  failStep(timeline: TimelineController, timelineIndex: number, info: string, message: string): never;
+};
+
+type PrepareReplayAttemptResult = {
+  attempt: number;
+  replayInputs: Record<string, string>;
+  replayInputOverride: Record<string, string> | null;
+  currentSnapshot: SnapshotState | null;
+};
+
 export async function prepareReplayAttempt({
   attempt,
   finalAttempt,
@@ -85,7 +113,7 @@ export async function prepareReplayAttempt({
   totalAttemptCost,
   timelineIndex,
   failStep,
-}) {
+}: PrepareReplayAttemptOptions): Promise<PrepareReplayAttemptResult> {
   attempt += 1;
   if (finalAttempt?.stepChanges?.length || finalAttempt?.stepWrites?.length) {
     timeline.logMuted(`${debugToken.policy('Replay is restoring project files touched by the previous attempt. Previous run artifacts are kept under their attempt folder.')}`);
@@ -155,7 +183,7 @@ export async function prepareReplayAttempt({
     else registry[key] = previousValue;
   }
 
-  const editedInputs = new Set();
+  const editedInputs = new Set<string>();
   const replayBaseInputs = replayInputs;
   if (replayInputOverride) {
     const nextInputs = { ...replayInputs };

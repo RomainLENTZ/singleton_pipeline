@@ -19,7 +19,7 @@
     "packages/cli/src/executor/inputs.ts",
     "packages/cli/src/executor/outputs.ts",
     "packages/cli/src/executor/preflight.js",
-    "packages/cli/src/executor/replay-loop.js",
+    "packages/cli/src/executor/replay-loop.ts",
     "packages/cli/src/executor/run-report.ts",
     "packages/cli/src/executor/run-setup.ts",
     "packages/cli/src/executor/security-review.ts",
