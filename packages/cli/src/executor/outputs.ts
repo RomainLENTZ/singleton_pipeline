@@ -1,36 +1,38 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { FileWrite, ParsedOutputSummary, PipelineStep, TimelineLike } from '../types.js';
 
-/** @typedef {import('../types.js').PipelineStep} PipelineStep */
-/** @typedef {import('../types.js').TimelineLike} TimelineLike */
-/** @typedef {import('../types.js').FileWrite} FileWrite */
+type RawOutputArtifactOptions = {
+  stepDir: string | null;
+  step: PipelineStep;
+  text: string;
+  reason: string;
+  timeline: TimelineLike;
+};
 
-/**
- * @param {string} absPath
- * @param {string} absRoot
- * @returns {boolean}
- */
-export function isInsidePath(absPath, absRoot) {
+type MoveAttemptArtifactsOptions = {
+  cwd: string;
+  stepDir: string | null;
+  attempt: number;
+  writes: FileWrite[];
+  rawOutputPath: string | null;
+};
+
+export function isInsidePath(absPath: string, absRoot: string): boolean {
   const rel = path.relative(absRoot, absPath);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-/**
- * @param {string} absPath
- * @param {string} cwd
- * @returns {boolean}
- */
-export function isSingletonInternalPath(absPath, cwd) {
+export function isSingletonInternalPath(absPath: string, cwd: string): boolean {
   return isInsidePath(absPath, path.join(cwd, '.singleton'));
 }
 
-/**
- * @param {string} absPath
- * @param {string} artifactRoot
- * @param {string} agentName
- * @param {string} outputName
- */
-export function assertRunArtifactWriteAllowed(absPath, artifactRoot, agentName, outputName) {
+export function assertRunArtifactWriteAllowed(
+  absPath: string,
+  artifactRoot: string,
+  agentName: string,
+  outputName: string
+): void {
   if (!isInsidePath(absPath, artifactRoot)) {
     throw new Error(
       `Step "${agentName}" output "${outputName}" resolves outside the run artifact workspace: ${absPath}`
@@ -41,12 +43,7 @@ export function assertRunArtifactWriteAllowed(absPath, artifactRoot, agentName, 
 // If an internal Singleton sink lands inside <root>/.singleton/ (but not inside
 // .singleton/runs/), redirect it into the current step's workspace. Project
 // deliverables are left untouched and remain subject to the security policy.
-/**
- * @param {unknown} sink
- * @param {{ cwd: string, stepDir: string }} options
- * @returns {unknown}
- */
-export function rewriteInternalSink(sink, { cwd, stepDir }) {
+export function rewriteInternalSink(sink: unknown, { cwd, stepDir }: { cwd: string, stepDir: string }): unknown {
   if (typeof sink !== 'string') return sink;
   const prefix = sink.startsWith('$FILE:') ? '$FILE:' : sink.startsWith('$FILES:') ? '$FILES:' : null;
   if (!prefix) return sink;
@@ -59,30 +56,23 @@ export function rewriteInternalSink(sink, { cwd, stepDir }) {
   return `${prefix}${path.join(stepDir, basename)}`;
 }
 
-/**
- * @param {string} text
- * @param {string[]} outputNames
- * @returns {Record<string, string>}
- */
-export function parseOutputs(text, outputNames) {
+export function parseOutputs(text: string, outputNames: string[]): Record<string, string> {
   if (outputNames.length === 1) {
-    return { [outputNames[0]]: text.trim() };
+    return { [outputNames[0] as string]: text.trim() };
   }
-  /** @type {Record<string, string>} */
-  const result = {};
+  const result: Record<string, string> = {};
   for (const name of outputNames) {
     const re = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'i');
-    const m = text.match(re);
-    result[name] = m ? m[1].trim() : '';
+    const match = text.match(re);
+    result[name] = match ? (match[1] ?? '').trim() : '';
   }
   return result;
 }
 
-/**
- * @param {Record<string, string>} parsed
- * @param {string[]} outputNames
- */
-export function summarizeParsedOutputs(parsed, outputNames) {
+export function summarizeParsedOutputs(
+  parsed: Record<string, string>,
+  outputNames: string[]
+): ParsedOutputSummary[] {
   return outputNames.map((name) => {
     const value = String(parsed[name] || '');
     const trimmed = value.trim();
@@ -95,11 +85,13 @@ export function summarizeParsedOutputs(parsed, outputNames) {
   });
 }
 
-/**
- * @param {{ stepDir: string | null, step: PipelineStep, text: string, reason: string, timeline: TimelineLike }} options
- * @returns {Promise<string | null>}
- */
-export async function writeRawOutputArtifact({ stepDir, step, text, reason, timeline }) {
+export async function writeRawOutputArtifact({
+  stepDir,
+  step,
+  text,
+  reason,
+  timeline,
+}: RawOutputArtifactOptions): Promise<string | null> {
   if (!stepDir) return null;
   const rawPath = path.join(stepDir, 'raw-output.md');
   const content = [
@@ -117,18 +109,13 @@ export async function writeRawOutputArtifact({ stepDir, step, text, reason, time
   return rawPath;
 }
 
-/**
- * @param {string} fromAbs
- * @param {string} toAbs
- * @returns {Promise<boolean>}
- */
-async function moveFileIfExists(fromAbs, toAbs) {
+async function moveFileIfExists(fromAbs: string, toAbs: string): Promise<boolean> {
   try {
     await fs.mkdir(path.dirname(toAbs), { recursive: true });
     await fs.rename(fromAbs, toAbs);
     return true;
   } catch (err) {
-    const code = err && typeof err === 'object' && 'code' in err ? err.code : null;
+    const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: unknown }).code : null;
     if (code === 'ENOENT') return false;
     await fs.copyFile(fromAbs, toAbs);
     await fs.rm(fromAbs, { force: true });
@@ -136,11 +123,13 @@ async function moveFileIfExists(fromAbs, toAbs) {
   }
 }
 
-/**
- * @param {{ cwd: string, stepDir: string | null, attempt: number, writes: FileWrite[], rawOutputPath: string | null }} options
- * @returns {Promise<{ writes: FileWrite[], rawOutputPath: string | null }>}
- */
-export async function moveAttemptArtifactsToAttemptDir({ cwd, stepDir, attempt, writes, rawOutputPath }) {
+export async function moveAttemptArtifactsToAttemptDir({
+  cwd,
+  stepDir,
+  attempt,
+  writes,
+  rawOutputPath,
+}: MoveAttemptArtifactsOptions): Promise<{ writes: FileWrite[], rawOutputPath: string | null }> {
   if (!stepDir || attempt !== 1) {
     return {
       writes,
@@ -149,8 +138,7 @@ export async function moveAttemptArtifactsToAttemptDir({ cwd, stepDir, attempt, 
   }
 
   const attemptDir = path.join(stepDir, `attempt-${attempt}`);
-  /** @type {FileWrite[]} */
-  const movedWrites = [];
+  const movedWrites: FileWrite[] = [];
   for (const entry of writes) {
     if (!isInsidePath(entry.absPath, stepDir) || isInsidePath(entry.absPath, attemptDir)) {
       movedWrites.push(entry);
