@@ -42,6 +42,7 @@
     "packages/cli/src/parser.test.js",
     "packages/cli/src/runners/claude.ts",
     "packages/cli/src/runners/claude.test.js",
+    "packages/cli/src/runners/codex.ts",
     "packages/cli/src/runners/codex-instructions.ts",
     "packages/cli/src/runners/codex-instructions.test.js",
     "packages/cli/src/runners/codex.test.js",
