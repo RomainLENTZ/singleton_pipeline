@@ -9,6 +9,22 @@ import { runPipeline } from '../executor.js';
 import { newAgentShellCommand } from './new.js';
 import { loadProjectSecurityConfig } from '../security/policy.js';
 import { resolveLatestRunDir } from '../executor/run-report.js';
+import type { CommandResult } from '../types.js';
+
+type Deliverable = {
+  path: string;
+  [key: string]: unknown;
+};
+
+type LastRunManifest = {
+  pipeline?: string;
+  deliverables?: Deliverable[];
+};
+
+type ExcludedDeliverable = {
+  file: Deliverable;
+  excludedBy: string;
+};
 
 const PIPELINES_DIRS = ['.singleton/pipelines'];
 
@@ -50,8 +66,8 @@ const RUN_FLAGS = [
   { label: '-v', description: 'alias for --verbose' },
 ];
 
-async function listPipelines(root) {
-  const names = [];
+async function listPipelines(root: string): Promise<string[]> {
+  const names: string[] = [];
   for (const dir of PIPELINES_DIRS) {
     try {
       const files = (await fs.readdir(path.resolve(root, dir)))
@@ -62,7 +78,7 @@ async function listPipelines(root) {
   return [...new Set(names)];
 }
 
-async function resolvePipelinePath(name, root) {
+async function resolvePipelinePath(name: string, root: string): Promise<string | null> {
   const candidates = [
     ...PIPELINES_DIRS.map((d) => path.resolve(root, d, `${name}.json`)),
     path.resolve(root, `${name}.json`),
@@ -74,13 +90,13 @@ async function resolvePipelinePath(name, root) {
   return null;
 }
 
-function runCommand(cmd, args, { cwd }) {
+function runCommand(cmd: string, args: string[], { cwd }: { cwd: string }): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
     child.on('error', reject);
     child.on('close', (code) => {
       if (code !== 0) {
@@ -92,14 +108,14 @@ function runCommand(cmd, args, { cwd }) {
   });
 }
 
-async function loadLastRunManifest(root) {
+async function loadLastRunManifest(root: string): Promise<LastRunManifest> {
   const latestDir = await resolveLatestRunDir(root);
   const manifestPath = path.join(latestDir, 'run-manifest.json');
   const raw = await fs.readFile(manifestPath, 'utf8');
   return JSON.parse(raw);
 }
 
-function splitInput(buffer) {
+function splitInput(buffer: string): { parts: string[]; current: string; endsWithSpace: boolean } {
   const leadingTrimmed = buffer.trimStart();
   const parts = leadingTrimmed.length ? leadingTrimmed.split(/\s+/) : [];
   const endsWithSpace = /\s$/.test(buffer);
@@ -107,24 +123,24 @@ function splitInput(buffer) {
   return { parts, current, endsWithSpace };
 }
 
-function replaceCurrentToken(buffer, replacement) {
+function replaceCurrentToken(buffer: string, replacement: string): string {
   if (/\s$/.test(buffer)) return `${buffer}${replacement}`;
   const idx = buffer.search(/\S+$/);
   if (idx === -1) return replacement;
   return `${buffer.slice(0, idx)}${replacement}`;
 }
 
-function matchesPrefix(value, prefix) {
+function matchesPrefix(value: string, prefix: string): boolean {
   return value.toLowerCase().startsWith(prefix.toLowerCase());
 }
 
-function matchesCommitExclude(relPath, pattern) {
+function matchesCommitExclude(relPath: string, pattern: string): boolean {
   const rel = String(relPath || '').replaceAll('\\', '/').replace(/^\/+/, '');
   const pat = String(pattern || '').replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
-  return pat && (rel === pat || rel.startsWith(`${pat}/`));
+  return Boolean(pat && (rel === pat || rel.startsWith(`${pat}/`)));
 }
 
-async function completeRepl(buffer, root) {
+async function completeRepl(buffer: string, root: string) {
   const { parts, current } = splitInput(buffer);
 
   if (parts.length <= 1 && !/\s$/.test(buffer)) {
@@ -199,7 +215,7 @@ function loadLogoLines() {
 const SINGLETON_LOGO = loadLogoLines();
 const APP_VERSION = 'v0.4.0-beta.12';
 
-async function showWelcome(root, shell) {
+async function showWelcome(root: string, shell: any): Promise<() => void> {
   const now     = new Date();
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -284,13 +300,12 @@ function createServeState(shell) {
   };
 }
 
-export async function replCommand(opts) {
+export async function replCommand(opts: { root?: string } = {}) {
   const root  = path.resolve(opts.root || process.cwd());
   const shell = createShell();
   const serveState = createServeState(shell);
 
-  /** @type {null | (() => void)} */
-  let stopShimmer = await showWelcome(root, shell);
+  let stopShimmer: (() => void) | null = await showWelcome(root, shell);
   await refreshFooter(root, shell);
 
   shell.setCompleter(({ buffer }) => completeRepl(buffer, root));
@@ -478,8 +493,8 @@ async function cmdStop(shell, serveState) {
   shell.log(`{${S.success}-fg}✓{/} Serve stopped {${S.string}-fg}${url}{/}`);
 }
 
-async function cmdCommitLast(root, shell) {
-  let manifest;
+async function cmdCommitLast(root: string, shell: any) {
+  let manifest: LastRunManifest;
   try {
     manifest = await loadLastRunManifest(root);
   } catch {
@@ -495,8 +510,8 @@ async function cmdCommitLast(root, shell) {
     return;
   }
 
-  const excluded = [];
-  const files = (Array.isArray(manifest.deliverables) ? manifest.deliverables : []).filter((file) => {
+  const excluded: ExcludedDeliverable[] = [];
+  const files = (Array.isArray(manifest.deliverables) ? manifest.deliverables : []).filter((file: Deliverable) => {
     const excludedBy = securityConfig.commit.excludePaths.find((pattern) => matchesCommitExclude(file.path, pattern));
     if (excludedBy) {
       excluded.push({ file, excludedBy });

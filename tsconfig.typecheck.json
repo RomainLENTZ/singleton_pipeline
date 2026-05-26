@@ -12,7 +12,7 @@
     "packages/cli/src/index.ts",
     "packages/cli/src/vendor.d.ts",
     "packages/cli/src/commands/new.ts",
-    "packages/cli/src/commands/repl.js",
+    "packages/cli/src/commands/repl.ts",
     "packages/cli/src/parser.ts",
     "packages/cli/src/executor.ts",
     "packages/cli/src/executor/debug-loop.ts",
