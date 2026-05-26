@@ -7,10 +7,11 @@ import { scanAgents } from './scanner.js';
 import { runPipeline } from './executor.js';
 import { newAgentCommand } from './commands/new.js';
 import { replCommand } from './commands/repl.js';
+import type { DiscoveredAgent } from './types.js';
 
 const program = new Command();
 
-function groupAgentsByProvider(agents) {
+function groupAgentsByProvider(agents: DiscoveredAgent[]): Map<string, DiscoveredAgent[]> {
   return agents.reduce((groups, agent) => {
     const provider = agent.provider || 'unknown';
     if (!groups.has(provider)) groups.set(provider, []);
