@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "checkJs": true,
+    "noImplicitAny": false,
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "."
+  },
+  "include": [
+    "packages/cli/src/**/*.js",
+    "packages/server/src/**/*.js"
+  ],
+  "exclude": [
+    "packages/cli/src/**/*.test.js",
+    "packages/server/src/**/*.test.js",
+    "packages/cli/src/__fixtures__/**"
+  ]
+}

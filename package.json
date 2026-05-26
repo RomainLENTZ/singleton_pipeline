@@ -72,8 +72,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.typecheck.json",
+    "build:ts": "tsc -p tsconfig.build.json",
+    "build": "npm run build:ts && npm run build:web",
     "build:web": "npm run build -w @singleton/web",
-    "prepublishOnly": "npm run build:web && npm test",
-    "pack:smoke": "npm pack && tar -tzf singleton-pipeline-*.tgz | head -60"
+    "prepublishOnly": "npm run build && npm test",
+    "pack:smoke": "npm run build && npm pack && tar -tzf singleton-pipeline-*.tgz | head -60"
   }
 }
