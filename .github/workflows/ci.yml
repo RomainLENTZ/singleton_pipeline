@@ -41,11 +41,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build web bundle
-        run: npm run build:web
+      - name: Build bundles
+        run: npm run build
 
       - name: Smoke · scan example project
-        run: node packages/cli/src/index.js scan examples/mixed-code-review
+        run: node dist/packages/cli/src/index.js scan examples/mixed-code-review
 
       - name: Smoke · dry-run mixed pipeline
-        run: node packages/cli/src/index.js run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json --dry-run
+        run: node dist/packages/cli/src/index.js run --pipeline examples/mixed-code-review/.singleton/pipelines/text-spec-to-code-review-mixed.json --dry-run

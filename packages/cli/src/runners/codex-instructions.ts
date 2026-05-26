@@ -1,15 +1,25 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+type InstructionFile = {
+  filePath: string;
+  content: string;
+};
+
+export type CodexProjectInstructions = {
+  text: string;
+  files: string[];
+};
+
 const PROJECT_DOC_FILENAMES = ['AGENTS.override.md', 'AGENTS.md'];
 const SKIP_DIRS = new Set(['.git', '.singleton', 'node_modules', 'dist', 'build', '.next', '.cache', 'coverage']);
 
-function isSubdir(parent, child) {
+function isSubdir(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-async function readFirstNonEmptyFile(dir, names) {
+async function readFirstNonEmptyFile(dir: string, names: string[]): Promise<InstructionFile | null> {
   for (const name of names) {
     const filePath = path.join(dir, name);
     try {
@@ -23,7 +33,7 @@ async function readFirstNonEmptyFile(dir, names) {
   return null;
 }
 
-async function collectInstructionFiles(rootDir, rel = '', out = []) {
+async function collectInstructionFiles(rootDir: string, rel = '', out: InstructionFile[] = []): Promise<InstructionFile[]> {
   const abs = rel ? path.join(rootDir, rel) : rootDir;
   const entries = await fs.readdir(abs, { withFileTypes: true });
 
@@ -39,12 +49,15 @@ async function collectInstructionFiles(rootDir, rel = '', out = []) {
   return out;
 }
 
-export async function discoverCodexProjectInstructions(projectRoot, currentDir) {
+export async function discoverCodexProjectInstructions(
+  projectRoot: string | undefined,
+  currentDir: string | undefined
+): Promise<CodexProjectInstructions> {
   const root = projectRoot || currentDir;
   if (!root) return { text: '', files: [] };
 
   if (!projectRoot || !currentDir || !isSubdir(projectRoot, currentDir)) {
-    const single = await readFirstNonEmptyFile(currentDir || projectRoot, PROJECT_DOC_FILENAMES);
+    const single = await readFirstNonEmptyFile(root, PROJECT_DOC_FILENAMES);
     return single
       ? { text: `<!-- ${path.basename(single.filePath)} -->\n${single.content}`, files: [single.filePath] }
       : { text: '', files: [] };
@@ -60,8 +73,8 @@ export async function discoverCodexProjectInstructions(projectRoot, currentDir) 
     return relA.localeCompare(relB);
   });
 
-  const chunks = [];
-  const files = [];
+  const chunks: string[] = [];
+  const files: string[] = [];
 
   for (const found of discovered) {
     files.push(found.filePath);

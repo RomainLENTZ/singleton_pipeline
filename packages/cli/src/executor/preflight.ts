@@ -12,6 +12,15 @@ import {
 } from '../security/policy.js';
 import { buildUserMessage, escapePromptXml, parsePipeRef, resolveFileGlob } from './inputs.js';
 import { isSingletonInternalPath } from './outputs.js';
+import type {
+  AgentConfig,
+  CommandResult,
+  InputDef,
+  PipelineConfig,
+  PipelineStep,
+  ProviderId,
+  SecurityPolicy,
+} from '../types.js';
 
 const WINDOWS_ARGV_PROMPT_WARN_BYTES = 24 * 1024;
 // Hard block threshold: past this, the prompt is very likely to crash the
@@ -20,13 +29,34 @@ const WINDOWS_ARGV_PROMPT_WARN_BYTES = 24 * 1024;
 // with an opaque ENAMETOOLONG/EINVAL surfacing from the spawn syscall.
 const WINDOWS_ARGV_PROMPT_BLOCK_BYTES = 28 * 1024;
 
-/** @typedef {import('../types.js').AgentConfig} AgentConfig */
-/** @typedef {import('../types.js').CommandResult} CommandResult */
-/** @typedef {import('../types.js').InputDef} InputDef */
-/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
-/** @typedef {import('../types.js').PipelineStep} PipelineStep */
-/** @typedef {import('../types.js').ProviderId} ProviderId */
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+type CopilotRepoAgentProfile = {
+  file: string | null;
+  projectRoot: string;
+  notVisibleFromGitRoot?: boolean;
+  tools?: string[];
+} | null;
+
+type OpenCodeAgentTools = Record<string, boolean>;
+
+type OpenCodeProjectAgentProfile = {
+  file: string | null;
+  tools?: OpenCodeAgentTools;
+} | null;
+
+type ValidationMessages = {
+  errors: string[];
+  warnings: string[];
+};
+
+type WindowsArgvPromptCheck = {
+  level: 'warning' | 'error';
+  message: string;
+};
+
+type SecurityConfig = {
+  file: string;
+  defaultProfile: string;
+};
 
 /**
  * @param {Partial<PipelineStep>} step
@@ -34,7 +64,7 @@ const WINDOWS_ARGV_PROMPT_BLOCK_BYTES = 28 * 1024;
  * @returns {ProviderId}
  */
 export function resolveProvider(step, agent) {
-  return step.provider || agent.provider || 'claude';
+  return (step.provider || agent.provider || 'claude') as ProviderId;
 }
 
 /**
@@ -70,13 +100,13 @@ export function resolvePermissionMode(step, agent) {
  * @param {{ cwd: string }} options
  * @returns {Promise<CommandResult>}
  */
-function runCommand(cmd, args, { cwd }) {
+function runCommand(cmd: string, args: string[], { cwd }: { cwd: string }): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
     child.on('error', reject);
     child.on('close', (code) => {
       if (code !== 0) {
@@ -88,7 +118,7 @@ function runCommand(cmd, args, { cwd }) {
   });
 }
 
-async function resolveCopilotProjectRoot(cwd) {
+async function resolveCopilotProjectRoot(cwd: string): Promise<string> {
   try {
     const { stdout } = await runCommand('git', ['rev-parse', '--show-toplevel'], { cwd });
     return stdout.trim() || cwd;
@@ -97,7 +127,7 @@ async function resolveCopilotProjectRoot(cwd) {
   }
 }
 
-async function findCopilotRepoAgentProfile(cwd, runnerAgent) {
+async function findCopilotRepoAgentProfile(cwd: string, runnerAgent: string | null): Promise<CopilotRepoAgentProfile> {
   const name = String(runnerAgent || '').trim();
   if (!name || name.includes('/') || name.includes('\\')) return null;
   const projectRoot = await resolveCopilotProjectRoot(cwd);
@@ -123,7 +153,7 @@ async function findCopilotRepoAgentProfile(cwd, runnerAgent) {
   }
 }
 
-function parseCopilotAgentTools(raw) {
+function parseCopilotAgentTools(raw: string): string[] {
   const match = String(raw || '').match(/^---\n([\s\S]*?)\n---/);
   if (!match) return [];
 
@@ -138,9 +168,19 @@ function parseCopilotAgentTools(raw) {
   return [];
 }
 
-function validateCopilotAgentTools({ label, runnerAgent, securityPolicy, tools }) {
-  const errors = [];
-  const warnings = [];
+function validateCopilotAgentTools({
+  label,
+  runnerAgent,
+  securityPolicy,
+  tools,
+}: {
+  label: string;
+  runnerAgent: string;
+  securityPolicy: SecurityPolicy;
+  tools: string[];
+}): ValidationMessages {
+  const errors: string[] = [];
+  const warnings: string[] = [];
   const list = Array.isArray(tools) ? tools : [];
   const writeEnabled = list.includes('write') || list.includes('edit');
   const shellEnabled = list.includes('shell') || list.includes('bash');
@@ -161,7 +201,7 @@ function validateCopilotAgentTools({ label, runnerAgent, securityPolicy, tools }
   return { errors, warnings };
 }
 
-async function findOpenCodeProjectAgentProfile(cwd, runnerAgent) {
+async function findOpenCodeProjectAgentProfile(cwd: string, runnerAgent: string | null): Promise<OpenCodeProjectAgentProfile> {
   const name = String(runnerAgent || '').trim();
   if (!name || name.includes('/') || name.includes('\\')) return null;
 
@@ -175,11 +215,11 @@ async function findOpenCodeProjectAgentProfile(cwd, runnerAgent) {
   }
 }
 
-function parseOpenCodeAgentTools(raw) {
+function parseOpenCodeAgentTools(raw: string): OpenCodeAgentTools {
   const match = String(raw || '').match(/^---\n([\s\S]*?)\n---/);
   if (!match) return {};
 
-  const tools = {};
+  const tools: OpenCodeAgentTools = {};
   let inTools = false;
   for (const line of match[1].split('\n')) {
     if (/^\s*tools\s*:\s*$/.test(line)) {
@@ -196,9 +236,19 @@ function parseOpenCodeAgentTools(raw) {
   return tools;
 }
 
-function validateOpenCodeAgentTools({ label, runnerAgent, securityPolicy, tools }) {
-  const errors = [];
-  const warnings = [];
+function validateOpenCodeAgentTools({
+  label,
+  runnerAgent,
+  securityPolicy,
+  tools,
+}: {
+  label: string;
+  runnerAgent: string;
+  securityPolicy: SecurityPolicy;
+  tools: OpenCodeAgentTools;
+}): ValidationMessages {
+  const errors: string[] = [];
+  const warnings: string[] = [];
   const writeEnabled = tools.write === true || tools.edit === true;
   const bashEnabled = tools.bash === true;
 
@@ -231,7 +281,17 @@ function validateOpenCodeAgentTools({ label, runnerAgent, securityPolicy, tools 
   return { errors, warnings };
 }
 
-function formatSecurityHighlight({ label, provider, permissionMode, securityPolicy }) {
+function formatSecurityHighlight({
+  label,
+  provider,
+  permissionMode,
+  securityPolicy,
+}: {
+  label: string;
+  provider: ProviderId;
+  permissionMode: string;
+  securityPolicy: SecurityPolicy;
+}): string {
   const parts = [`${label}: security_profile "${securityPolicy.profile}"`];
   if (provider === 'claude' && permissionMode) {
     parts.push(`permission_mode "${permissionMode}"`);
@@ -242,11 +302,26 @@ function formatSecurityHighlight({ label, provider, permissionMode, securityPoli
   return parts.join(` ${G.bullet} `);
 }
 
-function shouldHighlightSecurity({ provider, permissionMode, securityPolicy }) {
+function shouldHighlightSecurity({
+  provider,
+  permissionMode,
+  securityPolicy,
+}: {
+  provider: ProviderId;
+  permissionMode: string;
+  securityPolicy: SecurityPolicy;
+}): boolean {
   return securityPolicy.profile !== 'workspace-write' || (provider === 'claude' && Boolean(permissionMode));
 }
 
-function wrapProviderPromptEstimate(provider, { runnerAgent, systemPrompt, userMessage }) {
+function wrapProviderPromptEstimate(
+  provider: ProviderId,
+  {
+    runnerAgent,
+    systemPrompt,
+    userMessage,
+  }: { runnerAgent: string | null; systemPrompt: string; userMessage: string }
+): string {
   if (provider === 'claude') return systemPrompt;
   if (provider === 'copilot') return runnerAgent
     ? userMessage
@@ -294,7 +369,7 @@ async function estimateResolvedInputsForArgv(step, { cwd, inputValues, inputDefs
   return resolved;
 }
 
-async function estimateFilePromptBlock(spec, cwd) {
+async function estimateFilePromptBlock(spec: string, cwd: string): Promise<string> {
   const files = await resolveFileGlob(spec, cwd);
   if (files.length === 0) return `(no files matched: ${spec})`;
   return files.map((file) => {
@@ -303,8 +378,8 @@ async function estimateFilePromptBlock(spec, cwd) {
   }).join('\n\n');
 }
 
-function findBiggestInputContributor(resolvedInputs) {
-  let topName = null;
+function findBiggestInputContributor(resolvedInputs: Record<string, string>): { name: string; bytes: number } | null {
+  let topName: string | null = null;
   let topBytes = 0;
   for (const [name, value] of Object.entries(resolvedInputs)) {
     const bytes = Buffer.byteLength(String(value ?? ''), 'utf8');
@@ -327,7 +402,18 @@ export async function getWindowsArgvPromptCheck({
   inputValues,
   inputDefs,
   securityPolicy,
-}) {
+}: {
+  platform?: NodeJS.Platform;
+  label: string;
+  provider: ProviderId;
+  runnerAgent: string | null;
+  step: Partial<PipelineStep>;
+  agent: Partial<AgentConfig>;
+  cwd: string;
+  inputValues: Record<string, string>;
+  inputDefs: Array<Partial<InputDef> & { id: string; subtype?: string }>;
+  securityPolicy: SecurityPolicy;
+}): Promise<WindowsArgvPromptCheck | null> {
   if (platform !== 'win32') return null;
   if (!['claude', 'copilot', 'opencode'].includes(provider)) return null;
 
@@ -367,27 +453,41 @@ export async function getWindowsArgvPromptCheck({
 // `.message` of the structured check, regardless of level. Prefer the new
 // `getWindowsArgvPromptCheck` for callers that need to distinguish warning
 // from error.
-export async function getWindowsArgvPromptWarning(args) {
+export async function getWindowsArgvPromptWarning(args: Parameters<typeof getWindowsArgvPromptCheck>[0]): Promise<string | null> {
   const check = await getWindowsArgvPromptCheck(args);
   return check ? check.message : null;
 }
 
-function commandExists(command) {
+function commandExists(command: string): Promise<boolean> {
   return new Promise((resolve) => {
     const lookup = process.platform === 'win32' ? 'where' : 'which';
     const child = spawn(lookup, [command], { stdio: 'ignore' });
     child.on('error', () => resolve(false));
-    child.on('close', (code) => resolve(code === 0));
+    child.on('close', (code: number | null) => resolve(code === 0));
   });
 }
 
-export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues, dryRun, securityConfig }) {
-  const errors = [];
-  const warnings = [];
-  const infos = [];
-  const securityHighlights = [];
-  const stepAgents = new Map();
-  const availablePipeOutputs = new Set();
+export async function runPreflightChecks({
+  pipeline,
+  cwd,
+  inputDefs,
+  inputValues,
+  dryRun,
+  securityConfig,
+}: {
+  pipeline: PipelineConfig;
+  cwd: string;
+  inputDefs: InputDef[];
+  inputValues: Record<string, string>;
+  dryRun: boolean;
+  securityConfig?: SecurityConfig | null;
+}) {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const infos: string[] = [];
+  const securityHighlights: string[] = [];
+  const stepAgents = new Map<string, AgentConfig>();
+  const availablePipeOutputs = new Set<string>();
 
   if (securityConfig) {
     const relConfig = path.relative(cwd, securityConfig.file);
@@ -408,7 +508,7 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
     }
   }
 
-  const parsedAgents = [];
+  const parsedAgents: Array<{ step: PipelineStep; agent: AgentConfig }> = [];
   for (let i = 0; i < pipeline.steps.length; i += 1) {
     const step = pipeline.steps[i];
     const label = `Step ${i + 1} "${step.agent}"`;
@@ -438,7 +538,7 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
 
     parsedAgents.push({ step, agent });
     stepAgents.set(step.agent, agent);
-    const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig);
+    const securityPolicy = resolveSecurityPolicyWithConfig(step, agent, securityConfig ?? undefined);
     for (const error of validateSecurityPolicy(securityPolicy)) {
       errors.push(`${label} ${error}.`);
     }
@@ -592,7 +692,7 @@ export async function runPreflightChecks({ pipeline, cwd, inputDefs, inputValues
 
       let sink = rawSink;
       for (const [id, val] of Object.entries(inputValues)) {
-        sink = sink.replaceAll(`$INPUT:${id}`, val);
+        sink = sink.replaceAll(`$INPUT:${id}`, String(val));
       }
       const prefix = sink.startsWith('$FILE:') ? '$FILE:' : '$FILES:';
       const rawPath = sink.slice(prefix.length).trim();

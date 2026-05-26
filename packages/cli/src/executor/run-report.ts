@@ -1,75 +1,67 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { G, S } from '../shell.js';
+import type { DebugEvent, FileWrite, PipelineConfig, RunStat } from '../types.js';
 
 export const LATEST_RUN_ID_FILE = 'latest-run-id';
 
-/** @typedef {import('../types.js').DebugEvent} DebugEvent */
-/** @typedef {import('../types.js').FileWrite} FileWrite */
-/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
-/** @typedef {import('../types.js').RunStat} RunStat */
+type SummaryRow = {
+  step: string;
+  agent: string;
+  model: string;
+  status: string;
+  time: string;
+  cost: string;
+};
 
-/**
- * @param {unknown} s
- * @returns {number}
- */
-function visibleLength(s) {
-  return String(s || '').replace(/\{[^}]+\}/g, '').length;
+type RenderRunSummaryOptions = {
+  stats: RunStat[];
+  fileWrites: string[];
+  dryRun: boolean;
+  runDir?: string | null;
+  cwd: string;
+  runStatus?: string | null;
+};
+
+type WriteRunManifestOptions = {
+  runDir: string | null;
+  runId: string;
+  pipeline: PipelineConfig;
+  cwd: string;
+  stats: RunStat[];
+  fileWrites: FileWrite[];
+  detectedDeliverables?: FileWrite[];
+  status?: string;
+  error?: Error | null;
+  debugEvents?: DebugEvent[];
+};
+
+function visibleLength(value: unknown): number {
+  return String(value || '').replace(/\{[^}]+\}/g, '').length;
 }
 
-/**
- * @param {unknown} s
- * @param {number} width
- * @param {'left' | 'right'} [align]
- * @returns {string}
- */
-function padVisible(s, width, align = 'left') {
-  const str = String(s ?? '');
+function padVisible(value: unknown, width: number, align: 'left' | 'right' = 'left'): string {
+  const str = String(value ?? '');
   const pad = Math.max(0, width - visibleLength(str));
   return align === 'right' ? `${' '.repeat(pad)}${str}` : `${str}${' '.repeat(pad)}`;
 }
 
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function formatSeconds(value) {
+function formatSeconds(value: unknown): string {
   return `${Number(value || 0).toFixed(1)}s`;
 }
 
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function formatCost(value) {
+function formatCost(value: unknown): string {
   const cost = Number(value || 0);
   return cost > 0 ? `$${cost.toFixed(4)}` : '-';
 }
 
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function formatTurns(value) {
-  const turns = Number(value || 0);
-  return turns > 0 ? String(turns) : '-';
-}
-
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function displayValue(value) {
+function displayValue(value: unknown): string {
   return !value || value === '—' ? '-' : String(value);
 }
 
-// Status → color. Only the Status cell is coloured; the rest of the row stays white
+// Status -> color. Only the Status cell is coloured; the rest of the row stays white
 // so the outcome is scannable without being noisy.
-/**
- * @param {string} status
- * @returns {string}
- */
-function statusColor(status) {
+function statusColor(status: string): string {
   if (status === 'done')    return S.success;
   if (status === 'failed')  return S.error;
   if (status === 'dry-run') return S.warning;
@@ -78,11 +70,7 @@ function statusColor(status) {
 }
 
 // Section header in the debug-loop style: blank lines + `─── title ───` centered, colored accent.
-/**
- * @param {string} title
- * @returns {string[]}
- */
-function sectionHeader(title) {
+function sectionHeader(title: string): string[] {
   const width = 72;
   const text = ` ${title} `;
   const left = Math.max(0, Math.floor((width - text.length) / 2));
@@ -95,27 +83,30 @@ function sectionHeader(title) {
   ];
 }
 
-/**
- * @param {{ stats: RunStat[], fileWrites: string[], dryRun: boolean, runDir?: string | null, cwd: string, runStatus?: string | null }} options
- * @returns {string[]}
- */
-export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runStatus = null }) {
-  const totalSeconds = stats.reduce((sum, s) => sum + (s.seconds || 0), 0);
-  const totalCost = stats.reduce((sum, s) => sum + (s.cost || 0), 0);
+export function renderRunSummary({
+  stats,
+  fileWrites,
+  dryRun,
+  runDir,
+  cwd,
+  runStatus = null,
+}: RenderRunSummaryOptions): string[] {
+  const totalSeconds = stats.reduce((sum, stat) => sum + (stat.seconds || 0), 0);
+  const totalCost = stats.reduce((sum, stat) => sum + (stat.cost || 0), 0);
 
   // Compact 6-column table: #, agent, model, status (colored), time, cost.
-  // Provider/Policy/Attempts/Turns are dropped — they're available in run-manifest.json.
-  const rows = stats.map((s, i) => ({
-    step: String(i + 1),
-    agent: s.agent,
-    model: displayValue(s.model),
-    status: s.status,
-    time: s.status === 'dry-run' || s.status === 'skipped' ? '-' : formatSeconds(s.seconds),
-    cost: formatCost(s.cost),
+  // Provider/Policy/Attempts/Turns are dropped - they're available in run-manifest.json.
+  const rows: SummaryRow[] = stats.map((stat, index) => ({
+    step: String(index + 1),
+    agent: stat.agent,
+    model: displayValue(stat.model),
+    status: stat.status,
+    time: stat.status === 'dry-run' || stat.status === 'skipped' ? '-' : formatSeconds(stat.seconds),
+    cost: formatCost(stat.cost),
   }));
 
   const finalStatus = runStatus || (dryRun ? 'dry-run' : 'done');
-  const totalRow = {
+  const totalRow: SummaryRow = {
     step: '',
     agent: 'TOTAL',
     model: '-',
@@ -126,12 +117,12 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
 
   const allRows = [...rows, totalRow];
   const widths = {
-    step: Math.max(1, ...allRows.map((r) => visibleLength(r.step))),
-    agent: Math.max(5, ...allRows.map((r) => visibleLength(r.agent))),
-    model: Math.max(5, ...allRows.map((r) => visibleLength(r.model))),
-    status: Math.max(6, ...allRows.map((r) => visibleLength(r.status))),
-    time: Math.max(4, ...allRows.map((r) => visibleLength(r.time))),
-    cost: Math.max(4, ...allRows.map((r) => visibleLength(r.cost))),
+    step: Math.max(1, ...allRows.map((row) => visibleLength(row.step))),
+    agent: Math.max(5, ...allRows.map((row) => visibleLength(row.agent))),
+    model: Math.max(5, ...allRows.map((row) => visibleLength(row.model))),
+    status: Math.max(6, ...allRows.map((row) => visibleLength(row.status))),
+    time: Math.max(4, ...allRows.map((row) => visibleLength(row.time))),
+    cost: Math.max(4, ...allRows.map((row) => visibleLength(row.cost))),
   };
 
   const hr = [
@@ -144,25 +135,20 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   ].join(`{${S.subtle}-fg}${G.cross}{/}`);
 
   // Bold each cell individually because `{/}` from the separator would reset a row-level bold.
-  /**
-   * @param {{ step: string, agent: string, model: string, status: string, time: string, cost: string }} r
-   * @param {{ bold?: boolean, colorStatus?: boolean }} [options]
-   * @returns {string}
-   */
-  function row(r, { bold = false, colorStatus = false } = {}) {
+  function row(rowData: SummaryRow, { bold = false, colorStatus = false }: { bold?: boolean, colorStatus?: boolean } = {}): string {
     const b = bold ? '{bold}' : '';
     const bClose = bold ? '{/}' : '';
-    const statusPadded = padVisible(r.status, widths.status);
+    const statusPadded = padVisible(rowData.status, widths.status);
     const statusCell = colorStatus
-      ? `{${statusColor(r.status)}-fg}${b}${statusPadded}${bClose}{/}`
+      ? `{${statusColor(rowData.status)}-fg}${b}${statusPadded}${bClose}{/}`
       : `${b}${statusPadded}${bClose}`;
     return [
-      ` ${b}${padVisible(r.step, widths.step, 'right')}${bClose} `,
-      ` ${b}${padVisible(r.agent, widths.agent)}${bClose} `,
-      ` ${b}${padVisible(r.model, widths.model)}${bClose} `,
+      ` ${b}${padVisible(rowData.step, widths.step, 'right')}${bClose} `,
+      ` ${b}${padVisible(rowData.agent, widths.agent)}${bClose} `,
+      ` ${b}${padVisible(rowData.model, widths.model)}${bClose} `,
       ` ${statusCell} `,
-      ` ${b}${padVisible(r.time, widths.time, 'right')}${bClose} `,
-      ` ${b}${padVisible(r.cost, widths.cost, 'right')}${bClose} `,
+      ` ${b}${padVisible(rowData.time, widths.time, 'right')}${bClose} `,
+      ` ${b}${padVisible(rowData.cost, widths.cost, 'right')}${bClose} `,
     ].join(`{${S.subtle}-fg}${G.vline}{/}`);
   }
 
@@ -170,7 +156,7 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
     ...sectionHeader('Run summary'),
     row({ step: '#', agent: 'Agent', model: 'Model', status: 'Status', time: 'Time', cost: 'Cost' }, { bold: true }),
     `{${S.subtle}-fg}${hr}{/}`,
-    ...rows.map((r) => row(r, { colorStatus: true })),
+    ...rows.map((item) => row(item, { colorStatus: true })),
     `{${S.subtle}-fg}${hr}{/}`,
     row(totalRow, { bold: true, colorStatus: true }),
     '',
@@ -182,8 +168,8 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
 
   if (fileWrites.length) {
     lines.push(`  {${S.muted}-fg}Generated{/}  {${S.keyword}-fg}${fileWrites[0]}{/}`);
-    for (const f of fileWrites.slice(1)) {
-      lines.push(`             {${S.keyword}-fg}${f}{/}`);
+    for (const file of fileWrites.slice(1)) {
+      lines.push(`             {${S.keyword}-fg}${file}{/}`);
     }
   }
   lines.push('');
@@ -191,15 +177,22 @@ export function renderRunSummary({ stats, fileWrites, dryRun, runDir, cwd, runSt
   return lines;
 }
 
-/**
- * @param {{ runDir: string | null, runId: string, pipeline: PipelineConfig, cwd: string, stats: RunStat[], fileWrites: FileWrite[], detectedDeliverables?: FileWrite[], status?: string, error?: Error | null, debugEvents?: DebugEvent[] }} options
- * @returns {Promise<void>}
- */
-export async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fileWrites, detectedDeliverables = [], status = 'done', error = null, debugEvents = [] }) {
+export async function writeRunManifest({
+  runDir,
+  runId,
+  pipeline,
+  cwd,
+  stats,
+  fileWrites,
+  detectedDeliverables = [],
+  status = 'done',
+  error = null,
+  debugEvents = [],
+}: WriteRunManifestOptions): Promise<void> {
   if (!runDir) return;
 
-  const uniqueWrites = [];
-  const seen = new Set();
+  const uniqueWrites: FileWrite[] = [];
+  const seen = new Set<string>();
   for (const entry of [...fileWrites, ...detectedDeliverables]) {
     if (seen.has(entry.absPath)) continue;
     seen.add(entry.absPath);
@@ -226,21 +219,21 @@ export async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fi
       path: entry.relPath,
       absPath: entry.absPath,
     })),
-    stats: stats.map((s) => ({
-      agent: s.agent,
-      provider: s.provider,
-      model: s.model,
-      runnerAgent: s.runnerAgent,
-      securityProfile: s.securityProfile,
-      permissionMode: s.permissionMode,
-      status: s.status,
-      seconds: s.seconds,
-      turns: s.turns,
-      cost: s.cost,
-      attempts: s.attempts || 1,
-      outputWarnings: s.outputWarnings || [],
-      parsedOutputs: s.parsedOutputs || [],
-      rawOutputPath: s.rawOutputPath || null,
+    stats: stats.map((stat) => ({
+      agent: stat.agent,
+      provider: stat.provider,
+      model: stat.model,
+      runnerAgent: stat.runnerAgent,
+      securityProfile: stat.securityProfile,
+      permissionMode: stat.permissionMode,
+      status: stat.status,
+      seconds: stat.seconds,
+      turns: stat.turns,
+      cost: stat.cost,
+      attempts: stat.attempts || 1,
+      outputWarnings: stat.outputWarnings || [],
+      parsedOutputs: stat.parsedOutputs || [],
+      rawOutputPath: stat.rawOutputPath || null,
     })),
     debugEvents,
   };
@@ -248,11 +241,7 @@ export async function writeRunManifest({ runDir, runId, pipeline, cwd, stats, fi
   await fs.writeFile(path.join(runDir, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
 }
 
-/**
- * @param {{ cwd: string, runId: string }} options
- * @returns {Promise<void>}
- */
-export async function writeLatestRunPointer({ cwd, runId }) {
+export async function writeLatestRunPointer({ cwd, runId }: { cwd: string, runId: string }): Promise<void> {
   const runsDir = path.join(cwd, '.singleton', 'runs');
   await fs.mkdir(runsDir, { recursive: true });
   await fs.writeFile(path.join(runsDir, LATEST_RUN_ID_FILE), `${runId}\n`);
@@ -267,11 +256,7 @@ export async function writeLatestRunPointer({ cwd, runId }) {
   try { await fs.symlink(runId, latest, 'dir'); } catch { /* non-critical on Windows */ }
 }
 
-/**
- * @param {string} root
- * @returns {Promise<string>}
- */
-export async function resolveLatestRunDir(root) {
+export async function resolveLatestRunDir(root: string): Promise<string> {
   const runsDir = path.join(root, '.singleton', 'runs');
   const pointer = path.join(runsDir, LATEST_RUN_ID_FILE);
 

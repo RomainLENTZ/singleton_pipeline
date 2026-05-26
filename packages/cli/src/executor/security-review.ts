@@ -2,14 +2,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { S } from '../shell.js';
+import type { CommandResult, PipelineStep, SecurityPolicy, TimelineController } from '../types.js';
 
-function runCommand(cmd, args, { cwd }) {
+type SecurityViolation = {
+  path: string;
+  reason?: string;
+};
+
+type ShellLike = {
+  prompt(message: string): Promise<string>;
+};
+
+function runCommand(cmd: string, args: string[], { cwd }: { cwd: string }): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     child.on('error', reject);
     child.on('close', (code) => {
       if (code !== 0) {
@@ -21,7 +31,11 @@ function runCommand(cmd, args, { cwd }) {
   });
 }
 
-export async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = {}) {
+export async function getViolationDiffPreview(
+  cwd: string,
+  relPath: string,
+  { maxLines = 80 }: { maxLines?: number } = {}
+): Promise<string[]> {
   try {
     const { stdout } = await runCommand('git', ['diff', '--', relPath], { cwd });
     const lines = stdout.trimEnd().split('\n').filter(Boolean);
@@ -50,7 +64,15 @@ export async function getViolationDiffPreview(cwd, relPath, { maxLines = 80 } = 
   }
 }
 
-async function logViolationDiffPreviews({ violations, cwd, timeline }) {
+async function logViolationDiffPreviews({
+  violations,
+  cwd,
+  timeline,
+}: {
+  violations: SecurityViolation[];
+  cwd: string;
+  timeline: TimelineController;
+}): Promise<void> {
   const maxFiles = 5;
   const shown = violations.slice(0, maxFiles);
   for (const violation of shown) {
@@ -63,7 +85,25 @@ async function logViolationDiffPreviews({ violations, cwd, timeline }) {
   }
 }
 
-export async function handlePostRunViolations({ violations, step, securityPolicy, timeline, timelineIndex, shell, cwd, failStep }) {
+export async function handlePostRunViolations({
+  violations,
+  step,
+  securityPolicy,
+  timeline,
+  timelineIndex,
+  shell,
+  cwd,
+  failStep,
+}: {
+  violations: SecurityViolation[];
+  step: PipelineStep;
+  securityPolicy: SecurityPolicy;
+  timeline: TimelineController;
+  timelineIndex: number;
+  shell: ShellLike | null;
+  cwd: string;
+  failStep: (timeline: TimelineController, timelineIndex: number, info: string, message: string) => never;
+}): Promise<void> {
   if (violations.length === 0) return;
 
   timeline.log(`── post-run security violation ──`);
@@ -79,12 +119,13 @@ export async function handlePostRunViolations({ violations, step, securityPolicy
       timeline,
       timelineIndex,
       `${violations.length} security violation${violations.length > 1 ? 's' : ''}`,
-      `Post-run security validation failed for "${step.agent}":\n- ${violations.map((v) => v.path).join('\n- ')}`
+      `Post-run security validation failed for "${step.agent}":\n- ${violations.map((violation) => violation.path).join('\n- ')}`
     );
   }
 
+  const activeShell = shell as ShellLike;
   while (true) {
-    const answer = (await shell.prompt('Security violation: continue, stop, or diff? (c/s/d)')).trim().toLowerCase();
+    const answer = (await activeShell.prompt('Security violation: continue, stop, or diff? (c/s/d)')).trim().toLowerCase();
     if (answer === 'd' || answer === 'diff') {
       await logViolationDiffPreviews({ violations, cwd, timeline });
       continue;

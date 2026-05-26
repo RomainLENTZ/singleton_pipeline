@@ -4,19 +4,23 @@ import path from 'node:path';
 import spawn from 'cross-spawn';
 import { discoverCodexProjectInstructions } from './codex-instructions.js';
 import { findUsage, safeJsonParse } from './_shared.js';
+import type { ProviderRunner, SecurityPolicy } from '../types.js';
+
+type CodexArgsOptions = {
+  prompt?: string;
+  model?: string | null;
+  outputFile?: string;
+  securityPolicy?: Partial<SecurityPolicy>;
+};
+
+type CodexProcessResult = {
+  events: any[];
+  stderr: string;
+};
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
-/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
-
-/**
- * @param {string} systemPrompt
- * @param {string} userPrompt
- * @param {string} [projectInstructions]
- * @returns {string}
- */
-function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
+function buildPrompt(systemPrompt: string, userPrompt: string, projectInstructions = ''): string {
   const parts = ['Follow the system instructions exactly.', ''];
 
   if (projectInstructions) {
@@ -38,11 +42,7 @@ function buildPrompt(systemPrompt, userPrompt, projectInstructions = '') {
   return parts.join('\n');
 }
 
-/**
- * @param {Partial<SecurityPolicy>} [securityPolicy]
- * @returns {string[]}
- */
-export function buildCodexSandboxArgs(securityPolicy = {}) {
+export function buildCodexSandboxArgs(securityPolicy: Partial<SecurityPolicy> = {}): string[] {
   const profile = securityPolicy.profile || 'workspace-write';
 
   // Codex CLI sandbox modes: read-only, workspace-write,
@@ -54,11 +54,7 @@ export function buildCodexSandboxArgs(securityPolicy = {}) {
   return ['--sandbox', 'workspace-write'];
 }
 
-/**
- * @param {{ prompt?: string, model?: string | null, outputFile?: string, securityPolicy?: Partial<SecurityPolicy> }} [options]
- * @returns {string[]}
- */
-export function buildCodexArgs({ prompt, model, outputFile = '', securityPolicy } = {}) {
+export function buildCodexArgs({ model, outputFile = '', securityPolicy }: CodexArgsOptions = {}): string[] {
   const args = [
     'exec',
     '--json',
@@ -74,8 +70,7 @@ export function buildCodexArgs({ prompt, model, outputFile = '', securityPolicy 
   return args;
 }
 
-/** @type {ProviderRunner} */
-export const codexRunner = {
+export const codexRunner: ProviderRunner = {
   id: 'codex',
   command: 'codex',
 
@@ -96,8 +91,7 @@ export const codexRunner = {
 
     const args = buildCodexArgs({ prompt, model, outputFile, securityPolicy });
 
-    /** @type {{ events: any[], stderr: string }} */
-    const { events, stderr } = await new Promise((resolve, reject) => {
+    const { events, stderr } = await new Promise<CodexProcessResult>((resolve, reject) => {
       const child = spawn('codex', args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -107,7 +101,7 @@ export const codexRunner = {
         },
       });
 
-      const stdoutChunks = [];
+      const stdoutChunks: string[] = [];
       let stderrText = '';
       let timedOut = false;
 
@@ -117,13 +111,13 @@ export const codexRunner = {
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
 
-      child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
-      child.stderr.on('data', (d) => (stderrText += d.toString()));
-      child.on('error', (err) => {
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => (stderrText += chunk.toString()));
+      child.on('error', (err: Error) => {
         clearTimeout(timer);
         reject(err);
       });
-      child.on('close', (code) => {
+      child.on('close', (code: number | null) => {
         clearTimeout(timer);
         const stdout = stdoutChunks.join('');
         const events = stdout

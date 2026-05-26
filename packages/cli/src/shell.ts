@@ -1,4 +1,23 @@
 import blessed from 'blessed';
+import { ESC_SENTINEL } from './sentinels.js';
+
+type Suggestion = {
+  value: string;
+  label: string;
+  description?: string;
+};
+
+type Completer = (state: { buffer: string; cursor: number }) => Promise<Suggestion[]> | Suggestion[];
+
+type PromptMode = {
+  message: string;
+  silent: boolean;
+  completer: Completer | null;
+  default: string;
+  resolve(value: string): void;
+};
+
+type ShellMode = 'running' | 'awaiting' | 'error' | null;
 
 export const ASCII_MODE = process.env.SINGLETON_ASCII === '1'
   || (process.platform === 'win32' && process.env.SINGLETON_UNICODE !== '1');
@@ -217,14 +236,14 @@ export function createShell() {
   // ── Input state ─────────────────────────────────────────────────
   let buffer       = '';
   let inputEnabled = true;
-  let onSubmit     = null;
-  let promptMode   = null; // { resolve, message }
-  let completer    = null;
-  let suggestions  = [];
+  let onSubmit: ((value: string) => void) | null = null;
+  let promptMode: PromptMode | null = null;
+  let completer: Completer | null = null;
+  let suggestions: Suggestion[] = [];
   let suggestIndex = 0;
   let completeSeq  = 0;
   let pipelineMode = false;
-  let history = [];
+  let history: string[] = [];
   let historyIndex = -1;
   let draftBuffer = '';
   let hintIndex = 0;
@@ -234,7 +253,7 @@ export function createShell() {
   // Tracks the /run two-step submit: first Enter on `/run <pipeline>` opens flag suggestions
   // passively, second Enter submits. Cleared by any keystroke that breaks the dance.
   let runAwaitingSecondEnter = false;
-  function stripTags(s) {
+  function stripTags(s: unknown): string {
     return String(s || '').replace(/\{[^}]+\}/g, '');
   }
 
@@ -277,7 +296,7 @@ export function createShell() {
     suggestBox.show();
   }
 
-  async function refreshSuggestions({ applySingle = false, passive = false } = {}) {
+  async function refreshSuggestions({ applySingle = false, passive = false } = {}): Promise<boolean> {
     // Prompt-scoped completer (set via shell.prompt({ completer })) takes precedence,
     // so per-field autocompletes don't leak into the global slash-command completer.
     const activeCompleter = promptMode?.completer || completer;
@@ -303,7 +322,7 @@ export function createShell() {
     return suggestions.length > 0;
   }
 
-  function applySuggestion(item = suggestions[suggestIndex]) {
+  function applySuggestion(item = suggestions[suggestIndex]): boolean {
     if (!item) return false;
     buffer = item.value;
     hideSuggestions();
@@ -466,7 +485,7 @@ export function createShell() {
       buffer = '';
       if (!silent) log(`{${S.subtle}-fg}${G.cancel} cancelled{/} {${S.muted}-fg}${message}{/}`);
       updatePrompt();
-      resolve('__SINGLETON_ESC__');
+      resolve(ESC_SENTINEL);
       return;
     }
 
@@ -619,8 +638,8 @@ export function createShell() {
   // Timeline writes the step indicator (step X/N). The executor can override
   // with "input waiting" while a prompt is pending — overrides are sticky
   // until cleared, so the timeline's spinner-tick re-renders don't clobber them.
-  let pipelineLabelOverride = null;
-  function writePipelineLabel(text) {
+  let pipelineLabelOverride: string | null = null;
+  function writePipelineLabel(text: string): void {
     if (!text) {
       pipelineLabel.setContent('');
       pipelineLabel.hide();
@@ -630,11 +649,11 @@ export function createShell() {
     }
     screen.render();
   }
-  function applyPipelineLabel(text) {
+  function applyPipelineLabel(text: string): void {
     if (pipelineLabelOverride !== null) return;
     writePipelineLabel(text);
   }
-  function setPipelineLabel(text) {
+  function setPipelineLabel(text: string): void {
     pipelineLabelOverride = text;
     writePipelineLabel(`{${S.warning}-fg}{bold}${text}{/}`);
   }
@@ -647,21 +666,21 @@ export function createShell() {
   //   baseMode  — ambient mode set by the executor ('running' during a step, etc.)
   //   currentMode — what is actually painted; prompts override to 'awaiting' and restore baseMode on resolve.
   // Removed 'debug' as its own mode: a debug pause IS an awaiting state, a running debug step IS running.
-  let baseMode = null;
-  function applyMode(mode) {
-    const map = {
+  let baseMode: ShellMode = null;
+  function applyMode(mode: ShellMode): void {
+    const map: Record<Exclude<ShellMode, null>, string> = {
       running:  S.keyword,
       awaiting: S.warning,
       error:    S.error,
     };
-    const color = map[mode] || S.border;
+    const color = mode ? map[mode] : S.border;
     content.style.border.fg = color;
     pipelineLog.style.border.fg = color;
     sep1.style.fg = color;
     sep2.style.fg = color;
     screen.render();
   }
-  function setMode(mode) {
+  function setMode(mode: ShellMode): void {
     baseMode = mode;
     applyMode(mode);
   }

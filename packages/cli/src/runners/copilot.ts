@@ -1,18 +1,39 @@
 import spawn from 'cross-spawn';
 import path from 'node:path';
 import { extractText, safeJsonParse } from './_shared.js';
+import type { ProviderRunner, SecurityPolicy } from '../types.js';
+
+type CopilotEvent = {
+  type?: string;
+  data?: any;
+  usage?: any;
+  error?: any;
+  message?: unknown;
+};
+
+type CopilotArgsOptions = {
+  prompt?: string;
+  model?: string | null;
+  runnerAgent?: string | null;
+  securityPolicy?: Partial<SecurityPolicy>;
+};
+
+type CopilotSummary = {
+  text: string;
+  turns: number | null;
+  outputTokens: number | null;
+  premiumRequests: number | null;
+  result: CopilotEvent | null;
+};
+
+type CopilotProcessResult = {
+  events: CopilotEvent[];
+  stderr: string;
+};
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
-/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
-
-/**
- * @param {string} systemPrompt
- * @param {string} userPrompt
- * @returns {string}
- */
-function buildPrompt(systemPrompt, userPrompt) {
+function buildPrompt(systemPrompt: string, userPrompt: string): string {
   return [
     '<system>',
     systemPrompt,
@@ -25,33 +46,29 @@ function buildPrompt(systemPrompt, userPrompt) {
   ].join('\n');
 }
 
-function normalizeToolPath(value) {
+function normalizeToolPath(value: unknown): string {
   return String(value || '').replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
-function hasGlob(value) {
+function hasGlob(value: string): boolean {
   return /[*?[\]{}]/.test(value);
 }
 
-function looksLikeFile(value) {
+function looksLikeFile(value: string): boolean {
   const base = path.posix.basename(value);
   return Boolean(path.posix.extname(value)) || base === '.env';
 }
 
-function toWritePattern(entry) {
+function toWritePattern(entry: string): string | null {
   const normalized = normalizeToolPath(entry);
   if (!normalized) return null;
   if (hasGlob(normalized) || looksLikeFile(normalized)) return normalized;
   return `${normalized}/**`;
 }
 
-/**
- * @param {Partial<SecurityPolicy>} [securityPolicy]
- * @returns {string[]}
- */
-export function buildCopilotPermissionArgs(securityPolicy = {}) {
+export function buildCopilotPermissionArgs(securityPolicy: Partial<SecurityPolicy> = {}): string[] {
   const profile = securityPolicy.profile || 'workspace-write';
-  const args = [];
+  const args: string[] = [];
 
   if (profile === 'dangerous') {
     args.push('--allow-all-tools');
@@ -70,7 +87,7 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
 
   // Copilot CLI runs in deny-by-default mode as soon as any --allow-tool is
   // present. Agents need shell access to list/grep the codebase even when their
-  // write surface is restricted — otherwise the scout can't discover anything.
+  // write surface is restricted - otherwise the scout can't discover anything.
   // read-only stays shell-less; dangerous is already covered by --allow-all-tools.
   if (profile === 'read-only') {
     args.push('--deny-tool=write');
@@ -93,16 +110,12 @@ export function buildCopilotPermissionArgs(securityPolicy = {}) {
   return args;
 }
 
-/**
- * @param {{ prompt?: string, model?: string | null, runnerAgent?: string | null, securityPolicy?: Partial<SecurityPolicy> }} [options]
- * @returns {string[]}
- */
-export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} } = {}) {
+export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = {} }: CopilotArgsOptions = {}): string[] {
   // Copilot CLI expects the user prompt as `-p <text>` arg. Passing `-p -` is
   // interpreted as the literal string "-", not as a stdin marker, so we always
   // inline the prompt as an argument here. Callers must keep the prompt under
-  // ~32KB on Windows — large blobs (scout output, etc.) should be referenced
-  // as files on disk rather than injected inline.
+  // ~32KB on Windows; large blobs should be referenced as files on disk rather
+  // than injected inline.
   const args = [
     '-p',
     prompt ?? '',
@@ -115,13 +128,10 @@ export function buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy = 
   return args;
 }
 
-/**
- * @param {any[]} events
- */
-export function summarizeCopilotEvents(events) {
+export function summarizeCopilotEvents(events: CopilotEvent[]): CopilotSummary {
   // Copilot emits intermediate `assistant.message` events between tool calls
   // (the model's "thinking out loud"). The final deliverable is the LAST
-  // assistant.message — concatenating them all would prepend narration noise
+  // assistant.message - concatenating them all would prepend narration noise
   // to whatever the agent is supposed to produce as its output.
   const assistantMessages = events.filter((event) => event.type === 'assistant.message');
   const finalMessage = assistantMessages.at(-1);
@@ -146,13 +156,9 @@ export function summarizeCopilotEvents(events) {
   };
 }
 
-/**
- * @param {unknown} event
- * @returns {string}
- */
-export function extractCopilotErrorMessage(event) {
+export function extractCopilotErrorMessage(event: unknown): string {
   if (!event || typeof event !== 'object') return '';
-  const item = /** @type {any} */ (event);
+  const item = event as any;
   if (typeof item.error === 'string') return item.error;
   if (typeof item.message === 'string') return item.message;
   if (typeof item.error?.message === 'string') return item.error.message;
@@ -161,8 +167,7 @@ export function extractCopilotErrorMessage(event) {
   return extractText(item);
 }
 
-/** @type {ProviderRunner} */
-export const copilotRunner = {
+export const copilotRunner: ProviderRunner = {
   id: 'copilot',
   command: 'copilot',
 
@@ -181,10 +186,9 @@ export const copilotRunner = {
     const prompt = runnerAgent ? userPrompt : buildPrompt(systemPrompt, userPrompt);
     const args = buildCopilotArgs({ prompt, model, runnerAgent, securityPolicy });
 
-    /** @type {{ events: any[], stderr: string }} */
-    const { events, stderr } = await new Promise((resolve, reject) => {
+    const { events, stderr } = await new Promise<CopilotProcessResult>((resolve, reject) => {
       const child = spawn('copilot', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      const stdoutChunks = [];
+      const stdoutChunks: string[] = [];
       let stderrText = '';
       let timedOut = false;
 
@@ -194,13 +198,13 @@ export const copilotRunner = {
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
 
-      child.stdout.on('data', (d) => stdoutChunks.push(d.toString()));
-      child.stderr.on('data', (d) => (stderrText += d.toString()));
-      child.on('error', (err) => {
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => (stderrText += chunk.toString()));
+      child.on('error', (err: Error) => {
         clearTimeout(timer);
         reject(err);
       });
-      child.on('close', (code) => {
+      child.on('close', (code: number | null) => {
         clearTimeout(timer);
         const stdout = stdoutChunks.join('');
         const events = stdout
@@ -208,7 +212,7 @@ export const copilotRunner = {
           .map((line) => line.trim())
           .filter(Boolean)
           .map(safeJsonParse)
-          .filter(Boolean);
+          .filter(Boolean) as CopilotEvent[];
 
         if (timedOut) {
           reject(new Error(`copilot timed out after ${Math.round(timeoutMs / 1000)}s`));

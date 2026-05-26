@@ -2,29 +2,54 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { input } from '@inquirer/prompts';
+import { ESC_SENTINEL } from '../sentinels.js';
+import type { InputDef, PipelineStep, PromptStyle, SecurityPolicy } from '../types.js';
 
-/** @typedef {import('../types.js').InputDef} InputDef */
-/** @typedef {import('../types.js').PipelineConfig} PipelineConfig */
-/** @typedef {import('../types.js').PipelineStep} PipelineStep */
-/** @typedef {import('../types.js').PromptStyle} PromptStyle */
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
+type FileGlobResult = {
+  path: string;
+  content: string;
+};
 
-/**
- * @param {unknown} value
- * @returns {string}
- */
-export function escapePromptXml(value) {
+type ResolveInputOptions = {
+  registry: Record<string, string>;
+  cwd: string;
+  inputValues?: Record<string, string>;
+  inputDefs?: InputDef[];
+};
+
+type InputNode = {
+  id: string;
+  type: string;
+  data?: {
+    subtype?: string;
+    label?: string;
+    value?: string;
+  };
+};
+
+type CollectInputPipeline = {
+  nodes?: InputNode[];
+};
+
+type CollectInputOptions = {
+  promptFn?: ((message: string, defaultValue: string | null) => Promise<string>) | null;
+  style?: PromptStyle | null;
+  nonInteractive?: boolean;
+};
+
+type WorkspaceInfo = {
+  projectRoot: string;
+  stepDirRel: string;
+};
+
+export function escapePromptXml(value: unknown): string {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
 }
 
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function escapePromptXmlAttribute(value) {
+function escapePromptXmlAttribute(value: unknown): string {
   return escapePromptXml(value).replaceAll('"', '&quot;');
 }
 
@@ -32,12 +57,7 @@ function escapePromptXmlAttribute(value) {
 // Absolute paths are accepted as-is. Globs go through fast-glob; the
 // literal-path fallback handles the case where fg returns nothing but
 // the file actually exists on disk.
-/**
- * @param {string} spec
- * @param {string} cwd
- * @returns {Promise<Array<{ path: string, content: string }>>}
- */
-export async function resolveFileGlob(spec, cwd) {
+export async function resolveFileGlob(spec: string, cwd: string): Promise<FileGlobResult[]> {
   const pattern = spec.slice('$FILE:'.length).trim();
   const files = await fg(pattern, { cwd, absolute: true, dot: false });
   if (files.length === 0) {
@@ -49,58 +69,42 @@ export async function resolveFileGlob(spec, cwd) {
       return [];
     }
   }
-  const results = [];
-  for (const f of files) {
-    const content = await fs.readFile(f, 'utf8');
-    results.push({ path: f, content });
+  const results: FileGlobResult[] = [];
+  for (const file of files) {
+    const content = await fs.readFile(file, 'utf8');
+    results.push({ path: file, content });
   }
   return results;
 }
 
-/**
- * @param {string} spec
- * @param {Record<string, string>} registry
- * @returns {string}
- */
-function resolvePipeRef(spec, registry) {
+function resolvePipeRef(spec: string, registry: Record<string, string>): string {
   const ref = spec.slice('$PIPE:'.length).trim();
   const [agentId, outName] = ref.split('.');
   const key = outName ? `${agentId}.${outName}` : agentId;
   if (!(key in registry)) {
     throw new Error(`Unresolved $PIPE reference: ${ref}`);
   }
-  return registry[key];
+  return registry[key] as string;
 }
 
-/**
- * @param {string} spec
- * @returns {{ ref: string, agentId: string, outName: string | undefined }}
- */
-export function parsePipeRef(spec) {
+export function parsePipeRef(spec: string): { ref: string, agentId: string, outName: string | undefined } {
   const ref = String(spec).slice('$PIPE:'.length).trim();
-  const [agentId, outName] = ref.split('.');
+  const [agentId = '', outName] = ref.split('.');
   return { ref, agentId, outName };
 }
 
-/**
- * @param {unknown} spec
- * @returns {string | null}
- */
-function parseInputRef(spec) {
+function parseInputRef(spec: unknown): string | null {
   if (typeof spec !== 'string' || !spec.startsWith('$INPUT:')) return null;
   return spec.slice('$INPUT:'.length).trim();
 }
 
-/**
- * @param {PipelineStep} step
- * @param {Record<string, string>} previousInputs
- * @param {Record<string, string>} nextInputs
- * @param {InputDef[]} [inputDefs]
- * @returns {Record<string, string>}
- */
-export function resolveDebugInputOverridesFromEdit(step, previousInputs, nextInputs, inputDefs = []) {
-  /** @type {Record<string, string>} */
-  const overrides = {};
+export function resolveDebugInputOverridesFromEdit(
+  step: PipelineStep,
+  previousInputs: Record<string, string>,
+  nextInputs: Record<string, string>,
+  inputDefs: InputDef[] = []
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
   for (const [name, value] of Object.entries(nextInputs || {})) {
     if (previousInputs?.[name] === value) continue;
     const inputId = parseInputRef(step.inputs?.[name]);
@@ -112,18 +116,16 @@ export function resolveDebugInputOverridesFromEdit(step, previousInputs, nextInp
   return overrides;
 }
 
-/**
- * @param {unknown} spec
- * @param {{ registry: Record<string, string>, cwd: string, inputValues?: Record<string, string>, inputDefs?: InputDef[] }} options
- * @returns {Promise<string>}
- */
-export async function resolveInput(spec, { registry, cwd, inputValues = {}, inputDefs = [] }) {
+export async function resolveInput(
+  spec: unknown,
+  { registry, cwd, inputValues = {}, inputDefs = [] }: ResolveInputOptions
+): Promise<string> {
   if (typeof spec !== 'string') return escapePromptXml(spec);
   if (spec.startsWith('$INPUT:')) {
     const id = spec.slice('$INPUT:'.length).trim();
     const val = inputValues[id];
     if (!val) return `(input not provided: ${id})`;
-    const def = inputDefs.find((i) => i.id === id);
+    const def = inputDefs.find((item) => item.id === id);
     if (def?.subtype === 'file') {
       return resolveInput(`$FILE:${val}`, { registry, cwd, inputValues, inputDefs });
     }
@@ -132,10 +134,10 @@ export async function resolveInput(spec, { registry, cwd, inputValues = {}, inpu
   if (spec.startsWith('$FILE:')) {
     const files = await resolveFileGlob(spec, cwd);
     if (files.length === 0) return `(no files matched: ${spec})`;
-    return files.map((f) => {
+    return files.map((file) => {
       // Always expose POSIX-style paths in the prompt so agents see portable references.
-      const relPath = escapePromptXmlAttribute(path.relative(cwd, f.path).split(path.sep).join('/'));
-      const content = escapePromptXml(f.content);
+      const relPath = escapePromptXmlAttribute(path.relative(cwd, file.path).split(path.sep).join('/'));
+      const content = escapePromptXml(file.content);
       return `<file path="${relPath}" source="user" content_escaped="true">\n${content}\n</file>`;
     }).join('\n\n');
   }
@@ -145,25 +147,26 @@ export async function resolveInput(spec, { registry, cwd, inputValues = {}, inpu
   return escapePromptXml(spec);
 }
 
-/**
- * @param {PipelineConfig & { nodes?: Array<{ id: string, type: string, data?: { subtype?: string, label?: string, value?: string } }> }} pipeline
- * @param {boolean} dryRun
- * @param {{ promptFn?: ((message: string, defaultValue: string | null) => Promise<string>) | null, style?: PromptStyle | null, nonInteractive?: boolean }} [options]
- * @returns {Promise<Record<string, string>>}
- */
-export async function collectInputValues(pipeline, dryRun, { promptFn = null, style = null, nonInteractive = false } = {}) {
-  /** @type {InputDef[]} */
-  const defs = (pipeline.nodes || [])
-    .filter((n) => n.type === 'input')
-    .map((n) => ({ id: n.id, subtype: n.data?.subtype || 'text', label: n.data?.label || n.id, value: n.data?.value || '' }));
+export async function collectInputValues(
+  pipeline: CollectInputPipeline,
+  dryRun: boolean,
+  { promptFn = null, style = null, nonInteractive = false }: CollectInputOptions = {}
+): Promise<Record<string, string>> {
+  const defs: InputDef[] = (pipeline.nodes || [])
+    .filter((node) => node.type === 'input')
+    .map((node) => ({
+      id: node.id,
+      subtype: node.data?.subtype || 'text',
+      label: node.data?.label || node.id,
+      value: node.data?.value || '',
+    }));
   if (defs.length === 0) return {};
 
   if (!promptFn && style) console.log(style.heading('\nInputs\n'));
 
-  const askFn = promptFn || ((msg, def) => input({ message: msg, ...(def ? { default: def } : {}) }));
+  const askFn = promptFn || ((msg: string, def: string | null) => input({ message: msg, ...(def ? { default: def } : {}) }));
 
-  /** @type {Record<string, string>} */
-  const values = {};
+  const values: Record<string, string> = {};
   for (const def of defs) {
     const label = def.label || def.id;
     if (def.subtype === 'file' && def.value) {
@@ -181,17 +184,15 @@ export async function collectInputValues(pipeline, dryRun, { promptFn = null, st
       }
     } else {
       const msg = def.subtype === 'file' ? `${label} (file path)` : label;
-      values[def.id] = await askFn(msg, def.value || null);
+      const answer = await askFn(msg, def.value || null);
+      if (answer === ESC_SENTINEL) throw new Error('Pipeline cancelled');
+      values[def.id] = answer;
     }
   }
   return values;
 }
 
-/**
- * @param {SecurityPolicy | null | undefined} securityPolicy
- * @returns {string[]}
- */
-function buildSecurityPolicyBlock(securityPolicy) {
+function buildSecurityPolicyBlock(securityPolicy: SecurityPolicy | null | undefined): string[] {
   if (!securityPolicy) return [];
 
   const lines = [
@@ -228,15 +229,13 @@ function buildSecurityPolicyBlock(securityPolicy) {
   return lines;
 }
 
-/**
- * @param {Record<string, string>} resolvedInputs
- * @param {string[]} outputNames
- * @param {{ projectRoot: string, stepDirRel: string } | null | undefined} workspaceInfo
- * @param {SecurityPolicy | null | undefined} securityPolicy
- * @returns {string}
- */
-export function buildUserMessage(resolvedInputs, outputNames, workspaceInfo, securityPolicy) {
-  const parts = [];
+export function buildUserMessage(
+  resolvedInputs: Record<string, string>,
+  outputNames: string[],
+  workspaceInfo: WorkspaceInfo | null | undefined,
+  securityPolicy: SecurityPolicy | null | undefined
+): string {
+  const parts: string[] = [];
   if (workspaceInfo) {
     parts.push('<workspace>');
     parts.push(`Project root: ${workspaceInfo.projectRoot}`);

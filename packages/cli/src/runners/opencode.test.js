@@ -49,11 +49,13 @@ describe('buildOpenCodePermissionConfig', () => {
   });
 
   it('maps restricted-write allowed paths to OpenCode edit patterns', () => {
-    expect(buildOpenCodePermissionConfig({
+    const permission = /** @type {Record<string, any>} */ (buildOpenCodePermissionConfig({
       profile: 'restricted-write',
       allowedPaths: ['src', 'vite.config.ts'],
       blockedPaths: ['.env.*'],
-    }).permission.edit).toEqual({
+    }).permission);
+
+    expect(permission.edit).toEqual({
       '*': 'deny',
       'src/**': 'allow',
       'vite.config.ts': 'allow',
@@ -84,7 +86,7 @@ describe('buildOpenCodePermissionConfig', () => {
     // auth there, so isolating it strips API credentials from the spawned
     // process.
     expect(env.XDG_DATA_HOME).toBeUndefined();
-    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT).agent.reviewer.permission.edit).toBe('deny');
+    expect(JSON.parse(String(env.OPENCODE_CONFIG_CONTENT)).agent.reviewer.permission.edit).toBe('deny');
   });
 });
 

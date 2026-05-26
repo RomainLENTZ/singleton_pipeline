@@ -1,47 +1,47 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import type { AgentConfig, PipelineStep, SecurityPolicy, SecurityProfile } from '../types.js';
 
-const VALID_PROFILES = new Set(['read-only', 'workspace-write', 'restricted-write', 'dangerous']);
-const DEFAULT_PROFILE = 'workspace-write';
+type ProjectSecurityConfig = {
+  defaultProfile?: string;
+  allowedPaths?: string[];
+  blockedPaths?: string[];
+};
+
+type LoadedProjectSecurityConfig = Required<ProjectSecurityConfig> & {
+  file: string;
+  commit: {
+    excludePaths: string[];
+    requireConfirmation: boolean;
+  };
+};
+
+type AssertWriteOptions = {
+  root: string;
+  agentName: string;
+  outputName: string;
+  policy: SecurityPolicy;
+};
+
+const VALID_PROFILES = new Set<SecurityProfile>(['read-only', 'workspace-write', 'restricted-write', 'dangerous']);
+const DEFAULT_PROFILE: SecurityProfile = 'workspace-write';
 const DEFAULT_BLOCKED_PATHS = ['.git', 'node_modules', '.env', '.env.*', '.ssh'];
 const DEFAULT_COMMIT_EXCLUDE_PATHS = ['.singleton'];
 
-/** @typedef {import('../types.js').AgentConfig} AgentConfig */
-/** @typedef {import('../types.js').PipelineStep} PipelineStep */
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
-
-/**
- * @param {unknown} value
- * @returns {string[]}
- */
-function asList(value) {
-  return Array.isArray(value) ? value.filter(Boolean) : [];
+function asList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter(Boolean).map(String) : [];
 }
 
-/**
- * @param {string} parent
- * @param {string} child
- * @returns {boolean}
- */
-function isInside(parent, child) {
+function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function normalizeRel(value) {
+function normalizeRel(value: unknown): string {
   return String(value || '').replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
-/**
- * @param {string} relPath
- * @param {string} pattern
- * @returns {boolean}
- */
-function matchesPattern(relPath, pattern) {
+function matchesPattern(relPath: string, pattern: string): boolean {
   const rel = normalizeRel(relPath);
   const pat = normalizeRel(pattern);
   if (!pat) return false;
@@ -52,32 +52,19 @@ function matchesPattern(relPath, pattern) {
   return rel === pat || rel.startsWith(`${pat}/`);
 }
 
-/**
- * @param {string} root
- * @param {string} value
- * @returns {string}
- */
-function resolvePath(root, value) {
+function resolvePath(root: string, value: string): string {
   return path.isAbsolute(value) ? path.resolve(value) : path.resolve(root, value);
 }
 
-/**
- * @param {Partial<PipelineStep>} [step]
- * @param {Partial<AgentConfig>} [agent]
- * @returns {SecurityPolicy}
- */
-export function resolveSecurityPolicy(step = {}, agent = {}) {
+export function resolveSecurityPolicy(step: Partial<PipelineStep> = {}, agent: Partial<AgentConfig> = {}): SecurityPolicy {
   return resolveSecurityPolicyWithConfig(step, agent);
 }
 
-/**
- * @param {string} root
- */
-export async function loadProjectSecurityConfig(root) {
+export async function loadProjectSecurityConfig(root: string): Promise<LoadedProjectSecurityConfig> {
   const file = path.join(root, '.singleton', 'security.json');
   try {
     const raw = await fs.readFile(file, 'utf8');
-    const config = JSON.parse(raw);
+    const config = JSON.parse(raw) as any;
     return {
       file,
       defaultProfile: config.default_profile || DEFAULT_PROFILE,
@@ -92,7 +79,7 @@ export async function loadProjectSecurityConfig(root) {
       },
     };
   } catch (err) {
-    const code = err && typeof err === 'object' && 'code' in err ? err.code : null;
+    const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: unknown }).code : null;
     const message = err instanceof Error ? err.message : String(err);
     if (code !== 'ENOENT') {
       throw new Error(`Invalid project security config: ${file} (${message})`);
@@ -110,16 +97,14 @@ export async function loadProjectSecurityConfig(root) {
   }
 }
 
-/**
- * @param {Partial<PipelineStep>} [step]
- * @param {Partial<AgentConfig>} [agent]
- * @param {{ defaultProfile?: string, allowedPaths?: string[], blockedPaths?: string[] }} [projectConfig]
- * @returns {SecurityPolicy}
- */
-export function resolveSecurityPolicyWithConfig(step = {}, agent = {}, projectConfig = {}) {
-  const profile = /** @type {SecurityPolicy['profile']} */ (
+export function resolveSecurityPolicyWithConfig(
+  step: Partial<PipelineStep> = {},
+  agent: Partial<AgentConfig> = {},
+  projectConfig: ProjectSecurityConfig = {}
+): SecurityPolicy {
+  const profile = (
     step.security_profile || agent.security_profile || projectConfig.defaultProfile || DEFAULT_PROFILE
-  );
+  ) as SecurityProfile;
   return {
     profile,
     allowedPaths: asList(step.allowed_paths ?? agent.allowed_paths ?? projectConfig.allowedPaths),
@@ -131,12 +116,8 @@ export function resolveSecurityPolicyWithConfig(step = {}, agent = {}, projectCo
   };
 }
 
-/**
- * @param {SecurityPolicy} policy
- * @returns {string[]}
- */
-export function validateSecurityPolicy(policy) {
-  const errors = [];
+export function validateSecurityPolicy(policy: SecurityPolicy): string[] {
+  const errors: string[] = [];
   if (!VALID_PROFILES.has(policy.profile)) {
     errors.push(`unknown security_profile "${policy.profile}"`);
   }
@@ -146,11 +127,7 @@ export function validateSecurityPolicy(policy) {
   return errors;
 }
 
-/**
- * @param {string} absTarget
- * @param {{ root: string, agentName: string, outputName: string, policy: SecurityPolicy }} options
- */
-export function assertWriteAllowed(absTarget, { root, agentName, outputName, policy }) {
+export function assertWriteAllowed(absTarget: string, { root, agentName, outputName, policy }: AssertWriteOptions): void {
   const absRoot = path.resolve(root);
   const absPath = path.resolve(absTarget);
   const rel = path.relative(absRoot, absPath);

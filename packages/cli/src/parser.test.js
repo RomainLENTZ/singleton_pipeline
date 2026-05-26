@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { parseAgentFile, parseAgentFileDetailed } from './parser.js';
 
+/**
+ * @param {string} [content]
+ * @param {string} [filePath]
+ * @returns {import('./types.js').AgentConfig}
+ */
+function expectAgent(content = VALID_AGENT, filePath = '/tmp/agent.md') {
+  const agent = parseAgentFile(content, filePath);
+  expect(agent).not.toBeNull();
+  return /** @type {import('./types.js').AgentConfig} */ (agent);
+}
+
 const VALID_AGENT = `# My Agent
 
 ## Config
@@ -27,7 +38,7 @@ You are an agent. Do the thing with <alpha> and <beta>.
 
 describe('parseAgentFile', () => {
   it('parses required fields', () => {
-    const a = parseAgentFile(VALID_AGENT, '/tmp/agent.md');
+    const a = expectAgent();
     expect(a.id).toBe('my-agent');
     expect(a.description).toBe('Does the thing');
     expect(a.inputs).toEqual(['alpha', 'beta']);
@@ -35,7 +46,7 @@ describe('parseAgentFile', () => {
   });
 
   it('parses optional fields', () => {
-    const a = parseAgentFile(VALID_AGENT, '/tmp/agent.md');
+    const a = expectAgent();
     expect(a.tags).toEqual(['writing', 'code']);
     expect(a.provider).toBe('claude');
     expect(a.model).toBe('claude-sonnet-4-6');
@@ -47,13 +58,13 @@ describe('parseAgentFile', () => {
   });
 
   it('extracts the prompt body', () => {
-    const a = parseAgentFile(VALID_AGENT, '/tmp/agent.md');
+    const a = expectAgent();
     expect(a.prompt).toContain('You are an agent.');
     expect(a.prompt).toContain('<alpha>');
   });
 
   it('accepts opencode_agent as a provider-specific runner agent alias', () => {
-    const a = parseAgentFile(`## Config
+    const a = expectAgent(`## Config
 
 - **id**: opencode-reviewer
 - **description**: Reviews with OpenCode
@@ -61,7 +72,7 @@ describe('parseAgentFile', () => {
 - **outputs**: report
 - **provider**: opencode
 - **opencode_agent**: reviewer
-`, '/tmp/agent.md');
+`);
 
     expect(a.runner_agent).toBe('reviewer');
     expect(a.opencode_agent).toBe('reviewer');
@@ -72,7 +83,7 @@ describe('parseAgentFile', () => {
 foo: bar
 ---
 ${VALID_AGENT}`;
-    const a = parseAgentFile(withFrontmatter, '/tmp/agent.md');
+    const a = expectAgent(withFrontmatter);
     expect(a.id).toBe('my-agent');
   });
 });

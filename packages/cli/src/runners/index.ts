@@ -2,24 +2,17 @@ import { claudeRunner } from './claude.js';
 import { codexRunner } from './codex.js';
 import { copilotRunner } from './copilot.js';
 import { opencodeRunner } from './opencode.js';
+import type { ProviderId, ProviderRunner } from '../types.js';
 
-/** @typedef {import('../types.js').ProviderId} ProviderId */
-/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
-
-/** @type {Record<ProviderId, ProviderRunner>} */
-const RUNNERS = {
+const RUNNERS: Record<ProviderId, ProviderRunner> = {
   claude: claudeRunner,
   codex: codexRunner,
   copilot: copilotRunner,
   opencode: opencodeRunner,
 };
 
-/**
- * @param {string} [provider]
- * @returns {ProviderRunner}
- */
-export function getRunner(provider = 'claude') {
-  const key = /** @type {ProviderId} */ (String(provider || 'claude').trim().toLowerCase());
+export function getRunner(provider = 'claude'): ProviderRunner {
+  const key = String(provider || 'claude').trim().toLowerCase() as ProviderId;
   const runner = RUNNERS[key];
   if (!runner) {
     throw new Error(`Unknown provider: ${provider}`);

@@ -10,9 +10,83 @@ import {
   summarizeParsedOutputs,
   writeRawOutputArtifact,
 } from './outputs.js';
+import type {
+  FileWrite,
+  PipelineStep,
+  ProviderRunner,
+  SecurityPolicy,
+  SnapshotChange,
+  SnapshotManagerLike,
+  SnapshotState,
+  StepAttemptResult,
+  TimelineController,
+} from '../types.js';
 
-function formatStepRuntimeMeta({ provider, model, permissionMode, securityProfile }) {
-  const parts = [];
+type PostRunViolation = {
+  path: string;
+  reason: string;
+};
+
+type WorkspaceInfo = {
+  projectRoot: string;
+  stepDirRel: string;
+};
+
+type RunStepAttemptOptions = {
+  attempt: number;
+  debug: boolean;
+  stepDir: string | null;
+  cwd: string;
+  step: PipelineStep;
+  outputNames: string[];
+  inputs: Record<string, string>;
+  securityPolicy: SecurityPolicy;
+  systemPrompt: string;
+  workspaceInfo: WorkspaceInfo | null;
+  timeline: TimelineController;
+  timelineIndex: number;
+  verbose: boolean;
+  runner: ProviderRunner;
+  provider: string;
+  model: string | null;
+  runnerAgent: string | null;
+  permissionMode: string;
+  inputValues: Record<string, string>;
+  registry: Record<string, string>;
+  fileWrites: FileWrite[];
+  snapshotManager: SnapshotManagerLike;
+  currentSnapshot: SnapshotState | null;
+  shell: any;
+  handlePostRunViolations(options: {
+    violations: PostRunViolation[];
+    step: PipelineStep;
+    securityPolicy: SecurityPolicy;
+    timeline: TimelineController;
+    timelineIndex: number;
+    shell: any;
+    cwd: string;
+    failStep: (timeline: TimelineController, timelineIndex: number, info: string, message: string) => never;
+  }): Promise<void>;
+  failStep: (timeline: TimelineController, timelineIndex: number, info: string, message: string) => never;
+};
+
+type FilesManifestEntry = {
+  path: string;
+  content: string;
+};
+
+function formatStepRuntimeMeta({
+  provider,
+  model,
+  permissionMode,
+  securityProfile,
+}: {
+  provider?: string | null;
+  model?: string | null;
+  permissionMode?: string | null;
+  securityProfile?: string | null;
+}): string {
+  const parts: string[] = [];
   if (provider) parts.push(provider);
   if (model) parts.push(model);
   if (securityProfile) parts.push(`security:${securityProfile}`);
@@ -20,8 +94,8 @@ function formatStepRuntimeMeta({ provider, model, permissionMode, securityProfil
   return parts.join(' · ');
 }
 
-export function validateParsedOutputs(parsed, outputNames) {
-  const warnings = [];
+export function validateParsedOutputs(parsed: Record<string, string>, outputNames: string[]): string[] {
+  const warnings: string[] = [];
   for (const name of outputNames) {
     const value = String(parsed[name] || '').trim();
     if (!value) warnings.push(`output "${name}" is empty`);
@@ -29,8 +103,18 @@ export function validateParsedOutputs(parsed, outputNames) {
   return warnings;
 }
 
-export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
-  const violations = [];
+export function validatePostRunChanges({
+  changes,
+  securityPolicy,
+  step,
+  cwd,
+}: {
+  changes: SnapshotChange[];
+  securityPolicy: SecurityPolicy;
+  step: PipelineStep;
+  cwd: string;
+}): PostRunViolation[] {
+  const violations: PostRunViolation[] = [];
   for (const change of changes) {
     try {
       assertWriteAllowed(change.absPath, {
@@ -42,7 +126,7 @@ export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
     } catch (err) {
       violations.push({
         path: change.relPath,
-        reason: err.message,
+        reason: err instanceof Error ? err.message : String(err),
       });
     }
   }
@@ -76,7 +160,7 @@ export async function runStepAttempt({
   shell,
   handlePostRunViolations,
   failStep,
-}) {
+}: RunStepAttemptOptions): Promise<StepAttemptResult> {
   const attemptDir = debug && stepDir && attempt > 1 ? path.join(stepDir, `attempt-${attempt}`) : stepDir;
   if (attemptDir) await fs.mkdir(attemptDir, { recursive: true });
   const userMessage = buildUserMessage(inputs, outputNames, workspaceInfo, securityPolicy);
@@ -92,9 +176,9 @@ export async function runStepAttempt({
 
   if (verbose) {
     timeline.log(`── system prompt ──`);
-    for (const l of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(l);
+    for (const line of systemPrompt.split('\n').slice(0, 8)) timeline.logMuted(line);
     timeline.log(`── user message ──`);
-    for (const l of userMessage.split('\n').slice(0, 12)) timeline.logMuted(l);
+    for (const line of userMessage.split('\n').slice(0, 12)) timeline.logMuted(line);
   }
 
   const started = Date.now();
@@ -133,13 +217,13 @@ export async function runStepAttempt({
 
   if (verbose) {
     timeline.log(`── output ──`);
-    for (const l of text.split('\n').slice(0, 20)) timeline.logMuted(l);
+    for (const line of text.split('\n').slice(0, 20)) timeline.logMuted(line);
   }
 
   const parsed = parseOutputs(text, outputNames);
   const outputWarnings = validateParsedOutputs(parsed, outputNames);
   const parsedOutputSummary = summarizeParsedOutputs(parsed, outputNames);
-  let rawOutputPath = null;
+  let rawOutputPath: string | null = null;
   if (debug && (outputWarnings.length || outputNames.length > 1)) {
     rawOutputPath = await writeRawOutputArtifact({
       stepDir: attemptDir,
@@ -150,11 +234,19 @@ export async function runStepAttempt({
         : 'Debug raw output capture',
       timeline,
     });
+  } else if (verbose && attemptDir) {
+    rawOutputPath = await writeRawOutputArtifact({
+      stepDir: attemptDir,
+      step,
+      text,
+      reason: 'Verbose raw output capture',
+      timeline,
+    });
   }
 
   for (const name of outputNames) {
-    registry[`${step.agent}.${name}`] = parsed[name];
-    let sink = step.outputs[name];
+    registry[`${step.agent}.${name}`] = parsed[name] || '';
+    let sink = (step.outputs || {})[name];
 
     if (typeof sink === 'string') {
       for (const [id, val] of Object.entries(inputValues)) {
@@ -162,14 +254,14 @@ export async function runStepAttempt({
       }
     }
 
-    if (attemptDir) sink = rewriteInternalSink(sink, { cwd, stepDir: attemptDir });
+    if (attemptDir) sink = rewriteInternalSink(sink, { cwd, stepDir: attemptDir }) as string;
 
     if (typeof sink === 'string' && sink.startsWith('$FILES:')) {
       const baseDir = sink.slice('$FILES:'.length).trim();
       const absBase = path.isAbsolute(baseDir) ? baseDir : path.join(cwd, baseDir);
-      const isRunArtifactSink = attemptDir && isInsidePath(absBase, attemptDir);
-      const rawJson = parsed[name].replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
-      let manifest;
+      const isRunArtifactSink = Boolean(attemptDir && isInsidePath(absBase, attemptDir));
+      const rawJson = (parsed[name] || '').replace(/^```[a-z]*\n?/m, '').replace(/```\s*$/m, '').trim();
+      let manifest: unknown;
       try { manifest = JSON.parse(rawJson); } catch {
         await writeRawOutputArtifact({
           stepDir: attemptDir,
@@ -180,7 +272,7 @@ export async function runStepAttempt({
         });
         failStep(timeline, timelineIndex, 'invalid $FILES JSON', `Step "${step.agent}" returned invalid JSON for $FILES output "${name}".`);
       }
-      for (const entry of (Array.isArray(manifest) ? manifest : [])) {
+      for (const entry of (Array.isArray(manifest) ? manifest : []) as FilesManifestEntry[]) {
         const absOut = path.resolve(absBase, entry.path);
         if (isRunArtifactSink) {
           assertRunArtifactWriteAllowed(absOut, absBase, step.agent, name);
@@ -214,7 +306,7 @@ export async function runStepAttempt({
         });
       }
       await fs.mkdir(path.dirname(absOut), { recursive: true });
-      await fs.writeFile(absOut, parsed[name]);
+      await fs.writeFile(absOut, parsed[name] || '');
       fileWrites.push({
         absPath: absOut,
         relPath: path.relative(cwd, absOut),
@@ -224,7 +316,7 @@ export async function runStepAttempt({
   }
 
   const attemptWrites = fileWrites.slice(stepWritesStart);
-  let stepChanges = [];
+  let stepChanges: SnapshotChange[] = [];
   let stepAfterSnapshot = currentSnapshot;
   if (stepBeforeSnapshot) {
     stepAfterSnapshot = await snapshotManager.captureState();

@@ -1,8 +1,10 @@
 import { ref } from 'vue';
 
 export function useAgents() {
+  /** @type {import('vue').Ref<any[]>} */
   const agents = ref([]);
   const loading = ref(false);
+  /** @type {import('vue').Ref<string | null>} */
   const error = ref(null);
 
   async function fetchAgents() {
@@ -11,10 +13,10 @@ export function useAgents() {
     try {
       const res = await fetch('/api/agents');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data = /** @type {{ agents?: any[] }} */ (await res.json());
       agents.value = data.agents || [];
     } catch (e) {
-      error.value = e.message;
+      error.value = e instanceof Error ? e.message : String(e);
     } finally {
       loading.value = false;
     }
@@ -25,10 +27,10 @@ export function useAgents() {
     error.value = null;
     try {
       const res = await fetch('/api/agents/rescan', { method: 'POST' });
-      const data = await res.json();
+      const data = /** @type {{ agents?: any[] }} */ (await res.json());
       agents.value = data.agents || [];
     } catch (e) {
-      error.value = e.message;
+      error.value = e instanceof Error ? e.message : String(e);
     } finally {
       loading.value = false;
     }

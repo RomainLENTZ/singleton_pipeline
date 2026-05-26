@@ -4,6 +4,33 @@ import { input, search, select, confirm } from '@inquirer/prompts';
 import { style, line } from '../theme.js';
 import { scanAgents } from '../scanner.js';
 import { S } from '../shell.js';
+import { ESC_SENTINEL as ESC } from '../sentinels.js';
+import type { DiscoveredAgent } from '../types.js';
+
+type Choice = { name: string; value: string };
+type AgentCreationContext = {
+  root: string;
+  existing: DiscoveredAgent[];
+  existingIds: Set<string>;
+  existingOutputs: string[];
+  existingInputs: string[];
+  existingTags: string[];
+};
+type AgentDraft = Record<string, any> & {
+  id: string | null;
+  title: string | null;
+  description: string | null;
+  inputs: string[] | null;
+  outputs: string[] | null;
+  tags: string[] | null;
+  provider: string | null;
+  model: string | null;
+  permissionMode: string | null;
+  runnerAgent: string | null;
+  estimatedTokens: string | null;
+  file: string | null;
+};
+type FormField = { section: string; name: string };
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 const CHOICE_NONE = { name: '(none)', value: '' };
@@ -32,7 +59,7 @@ const OPENCODE_MODELS = [
   { name: 'anthropic/claude-sonnet-4-6', value: 'anthropic/claude-sonnet-4-6' },
   CHOICE_NONE,
 ];
-const PROVIDERS = [
+const PROVIDERS: Choice[] = [
   { name: 'claude', value: 'claude' },
   { name: 'codex', value: 'codex' },
   { name: 'copilot', value: 'copilot' },
@@ -48,18 +75,18 @@ const CODEX_DEFAULT_MODEL = 'gpt-5.4';
 const COPILOT_DEFAULT_MODEL = 'gpt-5.4-mini';
 const OPENCODE_DEFAULT_MODEL = 'ollama/qwen2.5-coder:14b';
 
-function uniqueSorted(values) {
-  return [...new Set(values.filter(Boolean))].sort();
+function uniqueSorted(values: unknown[]): string[] {
+  return [...new Set(values.filter(Boolean).map(String))].sort();
 }
 
-function defaultTitleFromId(id) {
+function defaultTitleFromId(id: string): string {
   return id
     .split('-')
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
     .join(' ');
 }
 
-function parseCsvList(value) {
+function parseCsvList(value: unknown): string[] {
   return uniqueSorted(
     String(value || '')
       .split(',')
@@ -68,7 +95,7 @@ function parseCsvList(value) {
   );
 }
 
-async function loadAgentCreationContext(root) {
+async function loadAgentCreationContext(root: string): Promise<AgentCreationContext> {
   const existing = await scanAgents(root);
 
   return {
@@ -81,41 +108,45 @@ async function loadAgentCreationContext(root) {
   };
 }
 
-function inputSuggestionsFromContext(context) {
+function inputSuggestionsFromContext(context: AgentCreationContext): string[] {
   return uniqueSorted([...context.existingOutputs, ...context.existingInputs]);
 }
 
-function validateAgentId(existingIds, value) {
+function validateAgentId(existingIds: Set<string>, value: string): true | string {
   if (!SLUG_RE.test(value)) return 'invalid slug (a-z, 0-9, hyphens)';
   if (existingIds.has(value)) return `id "${value}" is already used`;
   return true;
 }
 
-function defaultModelForProvider(provider) {
+function defaultModelForProvider(provider: string | null): string {
   if (provider === 'codex') return CODEX_DEFAULT_MODEL;
   if (provider === 'copilot') return COPILOT_DEFAULT_MODEL;
   if (provider === 'opencode') return OPENCODE_DEFAULT_MODEL;
   return CLAUDE_DEFAULT_MODEL;
 }
 
-function permissionChoicesForProvider(provider) {
+function permissionChoicesForProvider(provider: string): Choice[] {
   return provider === 'claude' ? CLAUDE_PERMISSION_MODES : [CHOICE_NONE];
 }
 
-function normalizeAgentDraft(draft) {
+function normalizeAgentDraft(draft: AgentDraft) {
   return {
     ...draft,
+    id: draft.id || '',
+    title: draft.title || '',
+    description: draft.description || '',
+    provider: draft.provider || '',
     inputs: uniqueSorted(draft.inputs || []),
     outputs: uniqueSorted(draft.outputs || []),
     tags: uniqueSorted(draft.tags || []),
     permissionMode: draft.provider === 'claude' ? (draft.permissionMode || '') : '',
-    runnerAgent: ['copilot', 'opencode'].includes(draft.provider) ? (draft.runnerAgent || '') : '',
+    runnerAgent: ['copilot', 'opencode'].includes(draft.provider || '') ? (draft.runnerAgent || '') : '',
     model: draft.model || '',
     estimatedTokens: draft.estimatedTokens || '',
   };
 }
 
-async function writeAgentDraft({ root, draft, askOverwrite }) {
+async function writeAgentDraft({ root, draft, askOverwrite }: { root: string; draft: any; askOverwrite(path: string): Promise<boolean> }) {
   const filename = draft.filename.endsWith('.md') ? draft.filename : `${draft.filename}.md`;
   const targetDir = path.resolve(root, DEFAULT_AGENTS_DIR);
   const targetFile = path.join(targetDir, filename);
@@ -134,7 +165,7 @@ async function writeAgentDraft({ root, draft, askOverwrite }) {
   return targetFile;
 }
 
-function modelChoicesForProvider(provider) {
+function modelChoicesForProvider(provider: string | null): Choice[] {
   if (provider === 'codex') return CODEX_MODELS;
   if (provider === 'copilot') return COPILOT_MODELS;
   if (provider === 'opencode') return OPENCODE_MODELS;
@@ -145,8 +176,8 @@ const DONE = '__DONE__';
 const UNDO = '__UNDO__';
 const SLUG_ITEM_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-async function collectList({ message, existing }) {
-  const picked = [];
+async function collectList({ message, existing }: { message: string; existing: string[] }): Promise<string[]> {
+  const picked: string[] = [];
 
   while (true) {
     const summary = picked.length ? style.muted(`[${picked.join(', ')}]`) : '';
@@ -155,7 +186,7 @@ async function collectList({ message, existing }) {
       message: summary ? `${message} ${summary}` : message,
       source: async (term) => {
         const t = (term || '').trim();
-        const choices = [];
+        const choices: Choice[] = [];
 
         if (picked.length > 0) {
           choices.push({
@@ -184,13 +215,13 @@ async function collectList({ message, existing }) {
       picked.pop();
       continue;
     }
-    if (!picked.includes(answer)) picked.push(answer);
+    if (!picked.includes(String(answer))) picked.push(String(answer));
   }
 
   return picked;
 }
 
-export async function newAgentCommand(opts) {
+export async function newAgentCommand(opts: { root?: string } = {}) {
   const root = path.resolve(opts.root || process.cwd());
   const context = await loadAgentCreationContext(root);
   const inputSuggestions = inputSuggestionsFromContext(context);
@@ -300,7 +331,7 @@ export async function newAgentCommand(opts) {
 // reflects current draft state. `:back` jumps to the previous field,
 // `:cancel` aborts.
 
-const ESC = '__SINGLETON_ESC__';
+type FormResult = 'done' | 'back' | 'cancelled';
 
 const SECTIONS = [
   {
@@ -340,14 +371,14 @@ const FIELD_LABELS = {
   file: 'file',
 };
 
-function isFieldVisible(name, draft) {
+function isFieldVisible(name: string, draft: AgentDraft): boolean {
   if (name === 'permissionMode') return draft.provider === 'claude';
-  if (name === 'runnerAgent')    return ['copilot', 'opencode'].includes(draft.provider);
+  if (name === 'runnerAgent')    return ['copilot', 'opencode'].includes(draft.provider || '');
   return true;
 }
 
-function buildOrder(draft) {
-  const order = [];
+function buildOrder(draft: AgentDraft): FormField[] {
+  const order: FormField[] = [];
   for (const section of SECTIONS) {
     for (const name of section.fields) {
       if (!isFieldVisible(name, draft)) continue;
@@ -357,14 +388,14 @@ function buildOrder(draft) {
   return order;
 }
 
-function formatValue(name, value) {
+function formatValue(name: string, value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (Array.isArray(value)) return value.length ? value.join(', ') : null;
   if (value === '') return null;
   return String(value);
 }
 
-function defaultFor(name, draft) {
+function defaultFor(name: string, draft: AgentDraft): string {
   if (name === 'title')        return draft.id ? defaultTitleFromId(draft.id) : '';
   if (name === 'provider')     return 'claude';
   if (name === 'model')        return defaultModelForProvider(draft.provider);
@@ -374,7 +405,7 @@ function defaultFor(name, draft) {
   return '';
 }
 
-function suggestionsFor(name, draft, context) {
+function suggestionsFor(name: string, draft: AgentDraft, context: AgentCreationContext): string[] {
   if (name === 'inputs')   return uniqueSorted([...context.existingOutputs, ...context.existingInputs]);
   if (name === 'outputs')  return context.existingOutputs;
   if (name === 'tags')     return context.existingTags;
@@ -386,7 +417,7 @@ function suggestionsFor(name, draft, context) {
 
 // Builds a `shell.prompt({ completer })` callback for a scalar field. Items match
 // the buffer substring, case-insensitively. Returns null when no autocomplete applies.
-function buildScalarCompleter(name, draft, context) {
+function buildScalarCompleter(name: string, draft: AgentDraft, context: AgentCreationContext) {
   if (!['provider', 'model', 'permissionMode'].includes(name)) return null;
   const items = suggestionsFor(name, draft, context);
   if (!items.length) return null;
@@ -400,7 +431,7 @@ function buildScalarCompleter(name, draft, context) {
 
 // Completer for list fields: filters existing repo values, excludes already-picked
 // items, and offers a `+ create "<term>"` row when the user types a fresh slug.
-function buildListCompleter(name, draft, context, picked) {
+function buildListCompleter(name: string, draft: AgentDraft, context: AgentCreationContext, picked: string[]) {
   const all = suggestionsFor(name, draft, context);
   return ({ buffer }) => {
     const t = String(buffer || '').trim();
@@ -417,7 +448,7 @@ function buildListCompleter(name, draft, context, picked) {
   };
 }
 
-function validateFieldRaw(name, value, draft, context) {
+function validateFieldRaw(name: string, value: string, draft: AgentDraft, context: AgentCreationContext): string | null {
   if (name === 'id') {
     const verdict = validateAgentId(context.existingIds, value);
     return verdict === true ? null : verdict;
@@ -441,14 +472,21 @@ function validateFieldRaw(name, value, draft, context) {
   return null;
 }
 
-function parseFieldValue(name, value) {
+function parseFieldValue(name: string, value: string): string | string[] {
   if (['inputs', 'outputs', 'tags'].includes(name)) return parseCsvList(value);
   if (name === 'permissionMode' && (value === '' || value === '(default)')) return '';
   return value;
 }
 
-function renderForm(shell, { draft, activeField, currentStep, totalSteps, context, error = null }) {
-  const lines = [];
+function renderForm(shell: any, { draft, activeField, currentStep, totalSteps, context, error = null }: {
+  draft: AgentDraft;
+  activeField: string;
+  currentStep: number;
+  totalSteps: number;
+  context: AgentCreationContext;
+  error?: string | null;
+}) {
+  const lines: string[] = [];
 
   lines.push('');
   lines.push(
@@ -501,8 +539,12 @@ function renderForm(shell, { draft, activeField, currentStep, totalSteps, contex
 // Review render — same shape as renderForm but no active field marker, and a
 // concise header tailored to the confirmation step. The full target path is
 // shown in the prompt bar message, not duplicated here.
-function renderReview(shell, { draft, error = null }) {
-  const lines = [];
+/**
+ * @param {any} shell
+ * @param {{ draft: any, error?: string | null }} options
+ */
+function renderReview(shell: any, { draft, error = null }: { draft: AgentDraft; error?: string | null }) {
+  const lines: string[] = [];
   lines.push('');
   lines.push(`{${S.text}-fg}{bold}New agent{/}  {${S.subtle}-fg}·{/} {${S.muted}-fg}review{/}`);
   lines.push('');
@@ -532,7 +574,7 @@ function renderReview(shell, { draft, error = null }) {
   shell.setContent(lines.join('\n'));
 }
 
-function cancelled(shell) {
+function cancelled(shell: any): null {
   shell.setMode(null);
   shell.clear();
   shell.log(`{${S.muted}-fg}/new cancelled{/}`);
@@ -542,10 +584,22 @@ function cancelled(shell) {
 // One-token-at-a-time collection sub-loop for list fields. Renders the form
 // after each pick so the user sees the growing list. Returns 'done' / 'back' /
 // 'cancelled'.
-async function collectListInShell({ shell, draft, name, context, renderForField }) {
-  const picked = Array.isArray(draft[name]) ? [...draft[name]] : [];
+async function collectListInShell({
+  shell,
+  draft,
+  name,
+  context,
+  renderForField,
+}: {
+  shell: any;
+  draft: AgentDraft;
+  name: string;
+  context: AgentCreationContext;
+  renderForField(error?: string | null): void;
+}): Promise<FormResult> {
+  const picked: string[] = Array.isArray(draft[name]) ? [...draft[name]] : [];
   const isRequired = name === 'outputs';
-  let error = null;
+  let error: string | null = null;
 
   while (true) {
     draft[name] = picked.length ? picked : null;
@@ -591,10 +645,20 @@ async function collectListInShell({ shell, draft, name, context, renderForField 
 
 // Run the form loop starting at `startIndex`, mutating `draft` in place.
 // Returns 'done' when all fields are filled, or 'cancelled' if the user aborted.
-async function runForm({ shell, draft, context, startIndex = 0 }) {
+async function runForm({
+  shell,
+  draft,
+  context,
+  startIndex = 0,
+}: {
+  shell: any;
+  draft: AgentDraft;
+  context: AgentCreationContext;
+  startIndex?: number;
+}): Promise<'done' | 'cancelled'> {
   let order = buildOrder(draft);
   let i = Math.min(startIndex, order.length - 1);
-  let lastError = null;
+  let lastError: string | null = null;
 
   while (i < order.length) {
     const name = order[i].name;
@@ -666,11 +730,11 @@ async function runForm({ shell, draft, context, startIndex = 0 }) {
   return 'done';
 }
 
-export async function newAgentShellCommand({ root, shell }) {
+export async function newAgentShellCommand({ root, shell }: { root?: string; shell: any }) {
   const absRoot = path.resolve(root || process.cwd());
   const context = await loadAgentCreationContext(absRoot);
 
-  const draft = {
+  const draft: AgentDraft = {
     id: null, title: null, description: null,
     inputs: null, outputs: null, tags: null,
     provider: null, model: null,
@@ -685,13 +749,13 @@ export async function newAgentShellCommand({ root, shell }) {
 
   // ── Confirm + write ────────────────────────────────────────────────────
   let targetDir = DEFAULT_AGENTS_DIR;
-  let confirmError = null;
+  let confirmError: string | null = null;
 
   while (true) {
     renderReview(shell, { draft, error: confirmError });
     confirmError = null;
 
-    const fullPath = path.join(targetDir, draft.file);
+    const fullPath = path.join(targetDir, String(draft.file));
     // The prompt message itself carries the target path and the inline action
     // hints, so the form panel above stays clean and the user reads everything
     // in one place. Tagged content is rendered verbatim by updatePrompt.
@@ -730,7 +794,7 @@ export async function newAgentShellCommand({ root, shell }) {
 
     if (trimmed === '' || ['y', 'yes'].includes(trimmed.toLowerCase())) {
       const targetAbsDir = path.resolve(absRoot, targetDir);
-      const targetFile = path.join(targetAbsDir, draft.file);
+      const targetFile = path.join(targetAbsDir, String(draft.file));
 
       let exists = false;
       try { await fs.access(targetFile); exists = true; } catch {}
@@ -764,8 +828,20 @@ export async function newAgentShellCommand({ root, shell }) {
   }
 }
 
-function renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, runnerAgent, permissionMode, estimatedTokens }) {
-  const lines = [
+function renderAgentFile({ title, id, description, inputs, outputs, tags, provider, model, runnerAgent, permissionMode, estimatedTokens }: {
+  title: string;
+  id: string;
+  description: string;
+  inputs: string[];
+  outputs: string[];
+  tags: string[];
+  provider?: string | null;
+  model?: string | null;
+  runnerAgent?: string | null;
+  permissionMode?: string | null;
+  estimatedTokens?: string | null;
+}) {
+  const lines: string[] = [
     `# ${title}`,
     '',
     '## Config',

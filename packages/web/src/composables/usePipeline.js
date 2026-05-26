@@ -1,7 +1,37 @@
 import { ref } from 'vue';
 
+/**
+ * @typedef {object} PipelineAgent
+ * @property {string} id
+ * @property {string=} file
+ * @property {string[]} inputs
+ * @property {string[]} outputs
+ */
+
+/**
+ * @typedef {object} PipelineNode
+ * @property {string} id
+ * @property {'agent' | 'input' | string} type
+ * @property {{ x: number, y: number }} position
+ * @property {Record<string, any>} data
+ */
+
+/**
+ * @typedef {object} PipelineEdge
+ * @property {string=} id
+ * @property {string} source
+ * @property {string} target
+ * @property {string=} sourceHandle
+ * @property {string=} targetHandle
+ */
+
+/**
+ * @param {import('vue').Ref<PipelineAgent[]>} agentsRef
+ */
 export function usePipeline(agentsRef) {
+  /** @type {import('vue').Ref<PipelineNode[]>} */
   const nodes = ref([]);
+  /** @type {import('vue').Ref<PipelineEdge[]>} */
   const edges = ref([]);
   const name = ref('my-pipeline');
   let nodeCounter = 0;
@@ -10,6 +40,10 @@ export function usePipeline(agentsRef) {
     return agentsRef.value.find((a) => a.id === agentId);
   }
 
+  /**
+   * @param {PipelineAgent} agent
+   * @param {{ x: number, y: number }} [position]
+   */
   function addAgentNode(agent, position = { x: 200, y: 120 }) {
     nodeCounter += 1;
     const id = `${agent.id}-${nodeCounter}`;
@@ -25,6 +59,10 @@ export function usePipeline(agentsRef) {
     return id;
   }
 
+  /**
+   * @param {{ x: number, y: number }} [position]
+   * @param {{ subtype?: string, label?: string, value?: string }} [options]
+   */
   function addInputNode(position = { x: 80, y: 120 }, { subtype = 'file', label = '', value = '' } = {}) {
     nodeCounter += 1;
     const id = `input-${nodeCounter}`;
@@ -35,6 +73,9 @@ export function usePipeline(agentsRef) {
     return id;
   }
 
+  /**
+   * @param {string} id
+   */
   function removeNode(id) {
     nodes.value = nodes.value.filter((n) => n.id !== id);
     edges.value = edges.value.filter((e) => e.source !== id && e.target !== id);
@@ -67,7 +108,7 @@ export function usePipeline(agentsRef) {
       let srcReason = '';
       if (src.type === 'agent') {
         const a = findAgent(src.data.agentId);
-        const srcName = e.sourceHandle?.replace(/^out-/, '');
+        const srcName = e.sourceHandle?.replace(/^out-/, '') || '';
         srcOk = !!(a && a.outputs.includes(srcName));
         if (!srcOk) srcReason = `output "${srcName}" introuvable`;
       } else if (src.type === 'input') {
@@ -81,7 +122,7 @@ export function usePipeline(agentsRef) {
       let tgtReason = '';
       if (tgt.type === 'agent') {
         const a = findAgent(tgt.data.agentId);
-        const tgtName = e.targetHandle?.replace(/^in-/, '');
+        const tgtName = e.targetHandle?.replace(/^in-/, '') || '';
         tgtOk = !!(a && a.inputs.includes(tgtName));
         if (!tgtOk) tgtReason = `input "${tgtName}" introuvable`;
       } else {
@@ -100,6 +141,9 @@ export function usePipeline(agentsRef) {
     return removed;
   }
 
+  /**
+   * @param {{ name?: string, nodes?: PipelineNode[], edges?: PipelineEdge[] }} data
+   */
   function loadPipeline(data) {
     clear();
     name.value = data.name || 'my-pipeline';
@@ -145,10 +189,12 @@ export function usePipeline(agentsRef) {
 
     const steps = agentOrder.map((id) => {
       const node = nodeById.get(id);
+      if (!node) throw new Error(`Missing pipeline node: ${id}`);
       const agent = findAgent(node.data.agentId);
       const nodeIncoming = incoming.get(id) || [];
       const nodeOutgoing = outgoing.get(id) || [];
 
+      /** @type {Record<string, string>} */
       const inputs = {};
       for (const inp of agent?.inputs || []) {
         const wired = nodeIncoming.find((e) => e.targetHandle === `in-${inp}`);
@@ -165,6 +211,7 @@ export function usePipeline(agentsRef) {
         }
       }
 
+      /** @type {Record<string, string>} */
       const outputs = {};
       for (const out of agent?.outputs || []) {
         outputs[out] = `$FILE:./output/${node.data.agentId}.${out}.md`;

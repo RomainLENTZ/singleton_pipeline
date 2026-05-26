@@ -1,8 +1,15 @@
 import { input } from '@inquirer/prompts';
 import { S } from '../shell.js';
+import { ESC_SENTINEL } from '../sentinels.js';
 import { buildUserMessage } from './inputs.js';
 import { summarizeParsedOutputs } from './outputs.js';
 import { formatSnapshotCoverage } from './snapshot-manager.js';
+import type {
+  FileWrite,
+  SnapshotChange,
+  TimelineController,
+} from '../types.js';
+import type { StepSnapshot } from './snapshot-manager.js';
 
 export const DEFAULT_MAX_DEBUG_REPLAYS = 3;
 
@@ -137,7 +144,7 @@ function debugLine(label, value, kind = 'text') {
 }
 
 function isPromptCancelled(value) {
-  return value === '__SINGLETON_ESC__';
+  return value === ESC_SENTINEL;
 }
 
 function logDebugInputs(resolvedInputs, timeline) {
@@ -223,9 +230,11 @@ function logDebugOutputs(parsed, outputNames, timeline) {
   }
 }
 
-function uniqueDebugPaths(entries) {
-  const out = [];
-  const seen = new Set();
+type DebugPathEntry = Pick<SnapshotChange | FileWrite, 'relPath'>;
+
+function uniqueDebugPaths(entries: DebugPathEntry[]): DebugPathEntry[] {
+  const out: DebugPathEntry[] = [];
+  const seen = new Set<string>();
   for (const entry of entries) {
     if (!entry?.relPath || seen.has(entry.relPath)) continue;
     seen.add(entry.relPath);
@@ -234,7 +243,19 @@ function uniqueDebugPaths(entries) {
   return out;
 }
 
-async function logDebugDiffs({ changes, writes = [], cwd, timeline, getDiffPreview }) {
+async function logDebugDiffs({
+  changes,
+  writes = [],
+  cwd,
+  timeline,
+  getDiffPreview,
+}: {
+  changes: SnapshotChange[];
+  writes?: FileWrite[];
+  cwd: string;
+  timeline: TimelineController;
+  getDiffPreview(cwd: string, relPath: string): Promise<string[]>;
+}) {
   logDebugSection('Debug step diff', timeline);
   const entries = uniqueDebugPaths([...changes, ...writes]);
   if (!entries.length) {
@@ -252,7 +273,7 @@ async function logDebugDiffs({ changes, writes = [], cwd, timeline, getDiffPrevi
   }
 }
 
-export function logSnapshotCoverage({ snapshot, timeline }) {
+export function logSnapshotCoverage({ snapshot, timeline }: { snapshot: StepSnapshot | null; timeline: TimelineController }) {
   if (!snapshot) return;
   const details = formatSnapshotCoverage(snapshot);
   if (!details.length) return;
