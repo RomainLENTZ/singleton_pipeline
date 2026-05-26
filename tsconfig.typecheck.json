@@ -27,7 +27,7 @@
     "packages/cli/src/executor/step-runner.js",
     "packages/cli/src/scanner.ts",
     "packages/cli/src/runners/index.ts",
-    "packages/cli/src/security/policy.js",
+    "packages/cli/src/security/policy.ts",
     "packages/server/src/index.js",
     "packages/server/src/routes/agents.js",
     "packages/server/src/routes/files.js",
