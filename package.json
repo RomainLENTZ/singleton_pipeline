@@ -29,15 +29,11 @@
     "node": ">=20"
   },
   "bin": {
-    "singleton": "./packages/cli/src/index.js"
+    "singleton": "./dist/packages/cli/src/index.js"
   },
   "files": [
-    "packages/cli/src/**/*.js",
-    "!packages/cli/src/**/*.test.js",
-    "!packages/cli/src/__fixtures__",
-    "packages/cli/package.json",
-    "packages/server/src/**/*.js",
-    "packages/server/package.json",
+    "dist/packages/cli/src/**/*.js",
+    "dist/packages/server/src/**/*.js",
     "packages/web/dist/**",
     "packages/web/package.json",
     "docs/reference.md",
@@ -65,10 +61,10 @@
     "vitest": "^3.2.4"
   },
   "scripts": {
-    "singleton": "node packages/cli/src/index.js",
-    "scan": "node packages/cli/src/index.js scan",
-    "serve": "node packages/cli/src/index.js serve",
-    "dev:server": "node packages/server/src/index.js",
+    "singleton": "npm run build:ts --silent && node dist/packages/cli/src/index.js",
+    "scan": "npm run build:ts --silent && node dist/packages/cli/src/index.js scan",
+    "serve": "npm run build:ts --silent && node dist/packages/cli/src/index.js serve",
+    "dev:server": "npm run build:ts --silent && node dist/packages/server/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.typecheck.json",
@@ -76,6 +72,6 @@
     "build": "npm run build:ts && npm run build:web",
     "build:web": "npm run build -w @singleton/web",
     "prepublishOnly": "npm run build && npm test",
-    "pack:smoke": "npm run build && npm pack && tar -tzf singleton-pipeline-*.tgz | head -60"
+    "pack:smoke": "npm run build && npm pack --cache .npm-cache && tar -tzf singleton-pipeline-*.tgz | head -60"
   }
 }
