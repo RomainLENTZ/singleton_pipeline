@@ -18,6 +18,7 @@ import {
 /** @typedef {import('../types.js').SnapshotChange} SnapshotChange */
 /** @typedef {import('../types.js').SnapshotManagerLike} SnapshotManagerLike */
 /** @typedef {import('../types.js').SnapshotState} SnapshotState */
+/** @typedef {import('../types.js').StepAttemptResult} StepAttemptResult */
 /** @typedef {import('../types.js').TimelineController} TimelineController */
 
 /**
@@ -97,8 +98,9 @@ export function validatePostRunChanges({ changes, securityPolicy, step, cwd }) {
  * @param {SnapshotManagerLike} options.snapshotManager
  * @param {SnapshotState | null} options.currentSnapshot
  * @param {any} options.shell
- * @param {(options: { violations: Array<{ path: string, reason: string }>, step: PipelineStep, securityPolicy: SecurityPolicy, timeline: TimelineController, timelineIndex: number, shell: any, cwd: string, failStep: Function }) => Promise<void>} options.handlePostRunViolations
+ * @param {(options: { violations: Array<{ path: string, reason: string }>, step: PipelineStep, securityPolicy: SecurityPolicy, timeline: TimelineController, timelineIndex: number, shell: any, cwd: string, failStep: (timeline: TimelineController, timelineIndex: number, info: string, message: string) => never }) => Promise<void>} options.handlePostRunViolations
  * @param {(timeline: TimelineController, timelineIndex: number, info: string, message: string) => never} options.failStep
+ * @returns {Promise<StepAttemptResult>}
  */
 export async function runStepAttempt({
   attempt,

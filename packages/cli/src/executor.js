@@ -61,19 +61,45 @@ export { detectSnapshotChanges } from './executor/snapshot-manager.js';
 export { validatePostRunChanges } from './executor/step-runner.js';
 export { loadPipeline } from './executor/run-setup.js';
 
+/** @typedef {import('./types.js').DebugEvent} DebugEvent */
+/** @typedef {import('./types.js').FileWrite} FileWrite */
+/** @typedef {import('./types.js').RunStat} RunStat */
+/** @typedef {import('./types.js').SnapshotChange} SnapshotChange */
+/** @typedef {import('./types.js').TimelineController} TimelineController */
+/** @typedef {import('./types.js').SnapshotManagerLike} SnapshotManagerLike */
+
+/**
+ * @param {TimelineController} timeline
+ * @param {number} index
+ * @param {unknown} shortMessage
+ * @param {unknown} [fullMessage]
+ * @returns {never}
+ */
 function failStep(timeline, index, shortMessage, fullMessage = shortMessage) {
   timeline.setError(index, String(shortMessage).slice(0, 60));
-  throw new Error(fullMessage);
+  throw new Error(String(fullMessage));
 }
 
+/**
+ * @param {unknown} s
+ * @returns {string}
+ */
 function stripBlessedTags(s) {
   return String(s || '').replace(/\{[^}]+\}/g, '');
 }
 
+/**
+ * @param {string} label
+ * @returns {string}
+ */
 function sectionTitle(label) {
   return `${G.hline}${G.hline} ${label} ${G.hline}${G.hline}`;
 }
 
+/**
+ * @param {string} filePath
+ * @param {{ dryRun?: boolean, verbose?: boolean, debug?: boolean, shell?: any, quiet?: boolean, nonInteractive?: boolean, maxDebugReplays?: number, debugDecision?: Function, debugPostDecision?: Function }} [opts]
+ */
 export async function runPipeline(filePath, opts = {}) {
   const abs = path.resolve(filePath);
   const pipeline = await loadPipeline(abs);
@@ -84,13 +110,14 @@ export async function runPipeline(filePath, opts = {}) {
   const debug   = !!opts.debug;
   const shell   = opts.shell || null;
   const quiet   = !!opts.quiet;
-  const nonInteractive = isNonInteractiveRuntime({ shell, nonInteractive: opts.nonInteractive });
-  const maxDebugReplays = Number.isInteger(opts.maxDebugReplays)
-    ? Math.max(0, opts.maxDebugReplays)
+  const nonInteractive = isNonInteractiveRuntime({ shell, nonInteractive: opts.nonInteractive ?? null });
+  const requestedMaxDebugReplays = opts.maxDebugReplays;
+  const maxDebugReplays = Number.isInteger(requestedMaxDebugReplays)
+    ? Math.max(0, Number(requestedMaxDebugReplays))
     : DEFAULT_MAX_DEBUG_REPLAYS;
   const securityConfig = await loadProjectSecurityConfig(cwd);
   const snapshotManager = dryRun ? null : await SnapshotManager.create({ root: cwd });
-  const beforeSnapshot = dryRun ? null : await snapshotManager.captureState();
+  const beforeSnapshot = snapshotManager ? await snapshotManager.captureState() : null;
   let currentSnapshot = beforeSnapshot;
 
   const { runId, runDir } = await createRunWorkspace({ cwd, pipeline, dryRun, debug });
@@ -98,12 +125,19 @@ export async function runPipeline(filePath, opts = {}) {
   const { inputDefs, inputValues } = await collectPipelineInputs({ pipeline, dryRun, shell, nonInteractive, quiet });
   const timeline = createRunTimeline({ pipeline, quiet, shell, nonInteractive });
 
+  /** @type {Record<string, string>} */
   const registry = {};
+  /** @type {FileWrite[]} */
   const fileWrites = [];
+  /** @type {string[]} */
   const verboseLog = [];
+  /** @type {RunStat[]} */
   const stats = [];
+  /** @type {DebugEvent[]} */
   const debugEvents = [];
+  /** @type {Record<string, string>} */
   const debugInputOverrides = {};
+  /** @type {Error | null} */
   let runError = null;
 
   try {
@@ -232,6 +266,7 @@ export async function runPipeline(filePath, opts = {}) {
       const stepDir = runDir ? path.join(runDir, `${stepIndex}-${step.agent}`) : null;
       if (stepDir) await fs.mkdir(stepDir, { recursive: true });
 
+      /** @type {Record<string, string>} */
       let resolvedInputs = {};
       const runtimeInputValues = debug
         ? { ...inputValues, ...debugInputOverrides }
@@ -276,7 +311,8 @@ export async function runPipeline(filePath, opts = {}) {
         });
 
         if (decision.inputs) {
-          const overrides = resolveDebugInputOverridesFromEdit(step, resolvedInputs, decision.inputs, inputDefs);
+          const decisionInputs = /** @type {Record<string, string>} */ (decision.inputs);
+          const overrides = resolveDebugInputOverridesFromEdit(step, resolvedInputs, decisionInputs, inputDefs);
           for (const [id, value] of Object.entries(overrides)) {
             debugInputOverrides[id] = value;
           }
@@ -288,7 +324,7 @@ export async function runPipeline(filePath, opts = {}) {
               inputIds: Object.keys(overrides),
             });
           }
-          resolvedInputs = decision.inputs;
+          resolvedInputs = decisionInputs;
         }
 
         if (decision.action === 'skip') {
@@ -331,9 +367,12 @@ export async function runPipeline(filePath, opts = {}) {
 
       const runner = getRunner(provider);
       let attempt = 1;
+      /** @type {{ stepChanges?: SnapshotChange[], stepWrites?: FileWrite[] } | null} */
       let finalAttempt = null;
       let shouldReplay = false;
+      /** @type {Record<string, string>} */
       let replayInputs = resolvedInputs;
+      /** @type {Record<string, string> | null} */
       let replayInputOverride = null;
       let totalAttemptSeconds = 0;
       let totalAttemptTurns = 0;
@@ -345,8 +384,9 @@ export async function runPipeline(filePath, opts = {}) {
         })
       );
       const stepSnapshotDir = debug && stepDir ? path.join(stepDir, '.snapshot') : null;
+      const activeSnapshotManager = /** @type {SnapshotManager} */ (snapshotManager);
       const stepSnapshot = stepSnapshotDir
-        ? await snapshotManager.createRestoreSnapshot({ snapshotDir: stepSnapshotDir })
+        ? await activeSnapshotManager.createRestoreSnapshot({ snapshotDir: stepSnapshotDir })
         : null;
       logSnapshotCoverage({ snapshot: stepSnapshot, timeline });
       const stepOriginalPaths = currentSnapshot ? new Set(currentSnapshot.keys()) : new Set();
@@ -357,7 +397,7 @@ export async function runPipeline(filePath, opts = {}) {
             attempt,
             finalAttempt,
             stepSnapshot,
-            snapshotManager,
+            snapshotManager: activeSnapshotManager,
             stepOriginalPaths,
             stepRegistrySnapshot,
             registry,
@@ -414,13 +454,16 @@ export async function runPipeline(filePath, opts = {}) {
           inputValues,
           registry,
           fileWrites,
-          snapshotManager,
+          snapshotManager: activeSnapshotManager,
           currentSnapshot,
           shell,
           handlePostRunViolations,
           failStep,
         });
         if (attemptResult.failed) {
+          const attemptError = attemptResult.error instanceof Error
+            ? attemptResult.error
+            : new Error(String(attemptResult.error));
           stats.push({
             agent: step.agent,
             provider,
@@ -434,7 +477,7 @@ export async function runPipeline(filePath, opts = {}) {
             cost: totalAttemptCost,
             attempts: attempt,
           });
-          failStep(timeline, timelineIndex, attemptResult.error.message, `Step "${step.agent}" failed: ${attemptResult.error.message}`);
+          failStep(timeline, timelineIndex, attemptError.message, `Step "${step.agent}" failed: ${attemptError.message}`);
         }
         totalAttemptSeconds += attemptResult.elapsedSeconds;
         totalAttemptTurns += attemptResult.attemptTurns;
@@ -592,14 +635,16 @@ export async function runPipeline(filePath, opts = {}) {
     } while (shouldReplay);
     }
   } catch (err) {
-    runError = err;
+    runError = err instanceof Error ? err : new Error(String(err));
   } finally {
     timeline.end();
     if (shell) shell.exitPipelineMode();
   }
 
-  const finalSnapshot = dryRun ? null : await snapshotManager.captureState();
-  const detectedDeliverables = dryRun ? [] : snapshotManager.detectChanges(beforeSnapshot, finalSnapshot);
+  const finalSnapshot = snapshotManager ? await snapshotManager.captureState() : null;
+  const detectedDeliverables = snapshotManager && beforeSnapshot && finalSnapshot
+    ? snapshotManager.detectChanges(beforeSnapshot, finalSnapshot)
+    : [];
   currentSnapshot = finalSnapshot || currentSnapshot;
   const runStatus = runError ? 'failed' : (dryRun ? 'dry-run' : 'done');
 

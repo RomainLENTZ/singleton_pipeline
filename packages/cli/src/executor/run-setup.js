@@ -5,6 +5,10 @@ import { createPlainTimeline, createTimeline } from '../timeline.js';
 import { G, S } from '../shell.js';
 import { collectInputValues } from './inputs.js';
 
+/**
+ * @param {{ shell?: any, nonInteractive?: boolean | null }} [options]
+ * @returns {boolean}
+ */
 export function isNonInteractiveRuntime({ shell = null, nonInteractive = null } = {}) {
   if (shell) return false;
   if (typeof nonInteractive === 'boolean') return nonInteractive;

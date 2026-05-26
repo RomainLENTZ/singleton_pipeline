@@ -83,7 +83,7 @@
  * @property {ProviderId | 'system'=} provider
  * @property {string=} model
  * @property {string=} runnerAgent
- * @property {SecurityProfile=} securityProfile
+ * @property {string=} securityProfile
  * @property {string=} permissionMode
  * @property {string} status
  * @property {number=} seconds
@@ -132,9 +132,14 @@
 /**
  * @typedef {object} TimelineController
  * @property {(index: number, info?: string) => void} setRunning
+ * @property {(index: number, info?: string) => void} setPaused
+ * @property {(index: number, info?: string) => void} setDone
+ * @property {(index: number, info?: string) => void} setError
  * @property {(text: string) => void} log
  * @property {(text: string) => void} logMuted
+ * @property {(text: string) => void} logSuccess
  * @property {(line: string) => void} logDiffLine
+ * @property {() => void} end
  */
 
 /**
@@ -152,6 +157,37 @@
  * @typedef {object} SnapshotManagerLike
  * @property {() => Promise<SnapshotState>} captureState
  * @property {(before: SnapshotState, after: SnapshotState) => SnapshotChange[]} detectChanges
+ */
+
+/**
+ * @typedef {object} StepAttemptFailure
+ * @property {true} failed
+ * @property {unknown} error
+ * @property {number} elapsedSeconds
+ * @property {number} attemptTurns
+ * @property {number} attemptCost
+ */
+
+/**
+ * @typedef {object} StepAttemptSuccess
+ * @property {false} failed
+ * @property {string | null} [attemptDir]
+ * @property {string} text
+ * @property {number} elapsedSeconds
+ * @property {number} attemptTurns
+ * @property {number} attemptCost
+ * @property {number} stepWritesStart
+ * @property {FileWrite[]} attemptWrites
+ * @property {Record<string, string>} parsed
+ * @property {string[]} outputWarnings
+ * @property {ParsedOutputSummary[]} parsedOutputSummary
+ * @property {string | null} rawOutputPath
+ * @property {SnapshotChange[]} stepChanges
+ * @property {SnapshotState | null} stepAfterSnapshot
+ */
+
+/**
+ * @typedef {StepAttemptFailure | StepAttemptSuccess} StepAttemptResult
  */
 
 /**
