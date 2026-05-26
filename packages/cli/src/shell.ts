@@ -1,4 +1,5 @@
 import blessed from 'blessed';
+import { ESC_SENTINEL } from './sentinels.js';
 
 type Suggestion = {
   value: string;
@@ -484,7 +485,7 @@ export function createShell() {
       buffer = '';
       if (!silent) log(`{${S.subtle}-fg}${G.cancel} cancelled{/} {${S.muted}-fg}${message}{/}`);
       updatePrompt();
-      resolve('__SINGLETON_ESC__');
+      resolve(ESC_SENTINEL);
       return;
     }
 

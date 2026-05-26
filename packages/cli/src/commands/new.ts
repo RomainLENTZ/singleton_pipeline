@@ -4,6 +4,7 @@ import { input, search, select, confirm } from '@inquirer/prompts';
 import { style, line } from '../theme.js';
 import { scanAgents } from '../scanner.js';
 import { S } from '../shell.js';
+import { ESC_SENTINEL as ESC } from '../sentinels.js';
 import type { DiscoveredAgent } from '../types.js';
 
 type Choice = { name: string; value: string };
@@ -330,7 +331,6 @@ export async function newAgentCommand(opts: { root?: string } = {}) {
 // reflects current draft state. `:back` jumps to the previous field,
 // `:cancel` aborts.
 
-const ESC = '__SINGLETON_ESC__';
 type FormResult = 'done' | 'back' | 'cancelled';
 
 const SECTIONS = [

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { input } from '@inquirer/prompts';
+import { ESC_SENTINEL } from '../sentinels.js';
 import type { InputDef, PipelineStep, PromptStyle, SecurityPolicy } from '../types.js';
 
 type FileGlobResult = {
@@ -183,7 +184,9 @@ export async function collectInputValues(
       }
     } else {
       const msg = def.subtype === 'file' ? `${label} (file path)` : label;
-      values[def.id] = await askFn(msg, def.value || null);
+      const answer = await askFn(msg, def.value || null);
+      if (answer === ESC_SENTINEL) throw new Error('Pipeline cancelled');
+      values[def.id] = answer;
     }
   }
   return values;

@@ -234,6 +234,14 @@ export async function runStepAttempt({
         : 'Debug raw output capture',
       timeline,
     });
+  } else if (verbose && attemptDir) {
+    rawOutputPath = await writeRawOutputArtifact({
+      stepDir: attemptDir,
+      step,
+      text,
+      reason: 'Verbose raw output capture',
+      timeline,
+    });
   }
 
   for (const name of outputNames) {

@@ -1,5 +1,6 @@
 import { input } from '@inquirer/prompts';
 import { S } from '../shell.js';
+import { ESC_SENTINEL } from '../sentinels.js';
 import { buildUserMessage } from './inputs.js';
 import { summarizeParsedOutputs } from './outputs.js';
 import { formatSnapshotCoverage } from './snapshot-manager.js';
@@ -143,7 +144,7 @@ function debugLine(label, value, kind = 'text') {
 }
 
 function isPromptCancelled(value) {
-  return value === '__SINGLETON_ESC__';
+  return value === ESC_SENTINEL;
 }
 
 function logDebugInputs(resolvedInputs, timeline) {
