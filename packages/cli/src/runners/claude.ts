@@ -1,18 +1,22 @@
 import spawn from 'cross-spawn';
+import type { ProviderRunner, SecurityPolicy } from '../types.js';
+
+type ClaudeOutput = {
+  result?: unknown;
+  model?: unknown;
+  num_turns?: unknown;
+  total_cost_usd?: unknown;
+  usage?: {
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+  };
+};
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.SINGLETON_RUNNER_TIMEOUT_MS) || 10 * 60 * 1000;
 const ALLOWED_PERMISSION_MODES = new Set(['bypassPermissions']);
 const READ_ONLY_DENY_TOOLS = ['Write', 'Edit', 'Bash', 'NotebookEdit'];
 
-/** @typedef {import('../types.js').SecurityPolicy} SecurityPolicy */
-/** @typedef {import('../types.js').ProviderRunner} ProviderRunner */
-
-/**
- * @param {Partial<SecurityPolicy>} [securityPolicy]
- * @param {string} [permissionMode]
- * @returns {string[]}
- */
-export function buildClaudePermissionArgs(securityPolicy = {}, permissionMode = '') {
+export function buildClaudePermissionArgs(securityPolicy: Partial<SecurityPolicy> = {}, permissionMode = ''): string[] {
   // Legacy escape hatch: when permission_mode is explicitly set on the agent or
   // step, honor it as-is and skip the security_policy mapping. This preserves
   // backward compatibility with pipelines authored before security_policy
@@ -25,7 +29,7 @@ export function buildClaudePermissionArgs(securityPolicy = {}, permissionMode = 
   }
 
   const profile = securityPolicy.profile || 'workspace-write';
-  const args = [];
+  const args: string[] = [];
 
   if (profile === 'dangerous') {
     args.push('--permission-mode', 'bypassPermissions');
@@ -45,8 +49,7 @@ export function buildClaudePermissionArgs(securityPolicy = {}, permissionMode = 
   return args;
 }
 
-/** @type {ProviderRunner} */
-export const claudeRunner = {
+export const claudeRunner: ProviderRunner = {
   id: 'claude',
   command: 'claude',
 
@@ -70,8 +73,7 @@ export const claudeRunner = {
 
     if (model) args.push('--model', model);
 
-    /** @type {any} */
-    const raw = await new Promise((resolve, reject) => {
+    const raw = await new Promise<ClaudeOutput>((resolve, reject) => {
       const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
@@ -83,13 +85,13 @@ export const claudeRunner = {
         setTimeout(() => child.kill('SIGKILL'), 5000).unref();
       }, timeoutMs);
 
-      child.stdout.on('data', (d) => (stdout += d.toString()));
-      child.stderr.on('data', (d) => (stderr += d.toString()));
-      child.on('error', (err) => {
+      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on('error', (err: Error) => {
         clearTimeout(timer);
         reject(err);
       });
-      child.on('close', (code) => {
+      child.on('close', (code: number | null) => {
         clearTimeout(timer);
         if (timedOut) {
           reject(new Error(`claude timed out after ${Math.round(timeoutMs / 1000)}s`));
@@ -101,7 +103,7 @@ export const claudeRunner = {
         }
 
         try {
-          resolve(JSON.parse(stdout));
+          resolve(JSON.parse(stdout) as ClaudeOutput);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           reject(new Error(`failed to parse claude output: ${message}\n${stdout.slice(0, 500)}`));
