@@ -24,7 +24,7 @@
     "packages/cli/src/executor/security-review.js",
     "packages/cli/src/executor/snapshot-manager.js",
     "packages/cli/src/executor/step-runner.js",
-    "packages/cli/src/scanner.js",
+    "packages/cli/src/scanner.ts",
     "packages/cli/src/security/policy.js",
     "packages/server/src/index.js",
     "packages/server/src/routes/agents.js",
