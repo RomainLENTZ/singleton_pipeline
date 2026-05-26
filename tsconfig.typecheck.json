@@ -12,7 +12,7 @@
     "packages/cli/src/index.js",
     "packages/cli/src/commands/new.js",
     "packages/cli/src/commands/repl.js",
-    "packages/cli/src/parser.js",
+    "packages/cli/src/parser.ts",
     "packages/cli/src/executor.js",
     "packages/cli/src/executor/debug-loop.js",
     "packages/cli/src/executor/inputs.js",
