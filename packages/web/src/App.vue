@@ -7,6 +7,7 @@ import ToastStack from './components/ToastStack.vue';
 import { useAgents } from './composables/useAgents.js';
 import { usePipeline } from './composables/usePipeline.js';
 import { useToast } from './composables/useToast.js';
+import logoUrl from './assets/logo.png';
 
 const { agents, loading, error, fetchAgents, rescan } = useAgents();
 const pipeline = usePipeline(agents);
@@ -35,7 +36,7 @@ watch(agents, () => {
   <div class="app">
     <header class="app__header">
       <div class="app__brand">
-        <span class="app__logo">◉</span>
+        <img class="app__logo" :src="logoUrl" alt="Singleton" />
         <h1 class="app__title">Singleton Pipeline Builder</h1>
         <span class="app__tagline">— drag agents, wire them up, ship a CLI command</span>
       </div>
@@ -75,8 +76,9 @@ watch(agents, () => {
   }
 
   &__logo {
-    color: $color-accent-soft;
-    font-weight: $font-weight-bold;
+    height: 32px;
+    width: auto;
+    display: block;
   }
 
   &__title {
