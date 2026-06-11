@@ -8,6 +8,7 @@ import { runPipeline } from './executor.js';
 import { newAgentCommand } from './commands/new.js';
 import { replCommand } from './commands/repl.js';
 import type { DiscoveredAgent } from './types.js';
+import {usageCommand} from "./commands/usage.js";
 
 const program = new Command();
 
@@ -104,5 +105,14 @@ program
   .action(async (opts) => {
     await replCommand(opts);
   });
+
+program
+    .command('usage')
+    .description('Show cost & run usage across providers')
+    .argument('[bucket]', 'Bucket to show (today | this-month | last-month | all-time)')
+    .option('-r, --root <path>', 'Project root', process.cwd())
+    .action(async (bucket,opts) => {
+        await usageCommand(opts, bucket);
+    });
 
 program.parseAsync(process.argv);

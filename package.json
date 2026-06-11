@@ -33,6 +33,7 @@
   },
   "files": [
     "dist/packages/cli/src/**/*.js",
+    "dist/packages/cli/src/assets/**",
     "dist/packages/server/src/**/*.js",
     "packages/web/dist/**",
     "packages/web/package.json",
@@ -68,7 +69,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.typecheck.json",
-    "build:ts": "tsc -p tsconfig.build.json",
+    "build:ts": "tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('packages/cli/src/assets', 'dist/packages/cli/src/assets', {recursive: true})\"",
     "build": "npm run build:ts && npm run build:web",
     "build:web": "npm run build -w @singleton/web",
     "prepublishOnly": "npm run build && npm test",
