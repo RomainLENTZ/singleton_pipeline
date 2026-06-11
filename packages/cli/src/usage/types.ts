@@ -37,7 +37,3 @@ export type ManifestStat = {
     provider : 'claude' | 'codex' | 'copilot' | 'opencode';
     cost: number;
 }
-
-export type BucketKeys = {
-
-}
