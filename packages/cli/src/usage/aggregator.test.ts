@@ -5,11 +5,6 @@ import { scanRuns } from './reader.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const repoRoot = path.resolve(__dirname, '../../../..');
-
 
 const run1: Run = {createdAt : "2026-06-04T13:11:23.495Z", provider : 'claude', cost : 0.04};
 const run2: Run = {createdAt : "2026-06-04T13:11:23.495Z", provider : 'claude', cost : 0.06};
@@ -22,16 +17,6 @@ const run7: Run = {createdAt : "2026-06-04T13:11:23.495Z", provider : 'codex', c
 
 const runs = [run1, run2, run3, run4, run5, run6, run7];
 const now = new Date('2026-06-03T12:00:00Z')
-
-
-/*
-it.only('scratch: see what scanRuns returns', async () => {
-    const runs = await scanRuns(repoRoot);
-    const result = aggregate(runs, new Date());
-
-    console.log(JSON.stringify(result, null, 2));
-
-});*/
 
 describe('aggregate', () => {
     it('returns an empty structure when there are no runs', () => {

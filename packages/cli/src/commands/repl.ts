@@ -10,6 +10,7 @@ import { newAgentShellCommand } from './new.js';
 import { loadProjectSecurityConfig } from '../security/policy.js';
 import { resolveLatestRunDir } from '../executor/run-report.js';
 import type { CommandResult } from '../types.js';
+import {usageCommand} from "./usage.js";
 
 type Deliverable = {
   path: string;
@@ -44,6 +45,8 @@ const HELP = [
   `  {${S.accent}-fg}{bold}/ls{/}                       list pipelines`,
   `  {${S.accent}-fg}{bold}/help{/}                     show help`,
   `  {${S.accent}-fg}{bold}/quit{/}                     quit  {${S.muted}-fg}(or Ctrl+C){/}`,
+  `  {${S.accent}-fg}{bold}/usage <path>{/}            Show usage summary actual project path by default`,
+  `  {${S.accent}-fg}{bold}/usage --today | this-month | last-month | all-time {/}                   Show usage summary `,
   '',
 ].join('\n');
 
@@ -56,6 +59,7 @@ const COMMANDS = [
   { label: '/commit-last', value: '/commit-last', description: 'commit the last run' },
   { label: '/ls', value: '/ls', description: 'list pipelines' },
   { label: '/help', value: '/help', description: 'show help' },
+  { label: '/usage', value: '/usage', description: 'show usage' },
   { label: '/quit', value: '/quit', description: 'quit' },
 ];
 
@@ -65,6 +69,13 @@ const RUN_FLAGS = [
   { label: '--debug', description: 'pause before each step' },
   { label: '-v', description: 'alias for --verbose' },
 ];
+
+const USAGE_FLAGS = [
+  { label: '--today', description: 'show today\'s usage', bucketValue : 'today' },
+  { label: '--this-month', description: 'show this month usage', bucketValue : 'this-month' },
+  { label: '--last-month', description: 'show last month usage', bucketValue : 'last-month' },
+  { label: '--all-time', description: 'show all time usage', bucketValue : 'all-time' },
+]
 
 async function listPipelines(root: string): Promise<string[]> {
   const names: string[] = [];
@@ -323,6 +334,7 @@ export async function replCommand(opts: { root?: string } = {}) {
         case '/serve': await cmdServe(root, shell, serveState); break;
         case '/stop':  await cmdStop(shell, serveState); break;
         case '/commit-last': await cmdCommitLast(root, shell); break;
+        case '/usage': await cmdUsage(args, root, shell); break
         case '/help':  shell.log(HELP); break;
         case '/quit':
         case '/exit':
@@ -476,6 +488,27 @@ async function cmdServe(root, shell, serveState) {
   shell.setFooterCenter(
     `{${S.muted}-fg}serve running{/} {${S.string}-fg}${serverUrl}{/}`
   );
+}
+
+async function cmdUsage(args, root, shell) {
+
+  shell.log(`{${S.muted}-fg}════════════════════════════════════════{/}`);
+
+  if (!args[0]) {
+    const o = await usageCommand({ root }, "");
+    shell.log(o);
+    return;
+  }
+
+  const b = USAGE_FLAGS.find(flag => flag.label === args[0])
+
+  if(!b){
+    shell.log(`{${S.error}-fg}✕{/} "${args[0]}" is not a valid flag. Use one of: --today, --this-month, --last-month, --all-time.`);
+    return;
+  }
+
+  const o = await usageCommand({ root }, b.bucketValue);
+  shell.log(o);
 }
 
 async function cmdStop(shell, serveState) {
