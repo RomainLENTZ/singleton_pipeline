@@ -33,19 +33,25 @@ export async function usageCommand(opts: UsageOptions, bucket : string): Promise
 }
 
 const LABEL_COL = 22;
+const RUNS_COL = 12;
 
 function renderBucketWithProvider (label : string, bucket : BucketWithProviders) : string {
     let msg = `\n{${S.muted}-fg}════════════════════════════════════════{/}\n{${S.keyword}-fg}{bold}${label}{/}\n`
 
+    let totalRuns = 0;
     for (const provider of Object.keys(bucket.byProvider) as ProviderId[]) {
         const prefix = `   ${provider}`;
+        const runCount = bucket.byProvider[provider].runCount;
+        const runs = `${runCount} runs`;
         const cost = `$${bucket.byProvider[provider].totalCost}`;
-        msg += `{${S.text}-fg}{bold}${prefix.padEnd(LABEL_COL)}{/}${cost}\n`;
+        totalRuns += runCount;
+        msg += `{${S.text}-fg}{bold}${prefix.padEnd(LABEL_COL)}{/}${runs.padEnd(RUNS_COL)}${cost}\n`;
     }
 
     const totalPrefix = `${label} total:`;
+    const totalRunsStr = `${totalRuns} runs`;
     const totalCost = `$${bucket.total}`;
-    msg += `{${S.accent}-fg}{bold}${totalPrefix.padEnd(LABEL_COL)}${totalCost}{/}`;
+    msg += `{${S.accent}-fg}{bold}${totalPrefix.padEnd(LABEL_COL)}${totalRunsStr.padEnd(RUNS_COL)}${totalCost}{/}`;
 
     return msg;
 }
