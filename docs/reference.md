@@ -941,6 +941,33 @@ Start the interactive shell.
 singleton
 ```
 
+### `usage`
+
+Show cost and run usage across providers, broken down by time bucket.
+
+```bash
+singleton usage              # full summary (today, this-month, last-month, all-time)
+singleton usage today        # only today's bucket
+singleton usage this-month   # only the current month
+singleton usage last-month   # only the previous month
+singleton usage all-time     # cumulative total since the first run
+```
+
+Options:
+
+- `--root <path>` — project root, defaults to the current directory
+
+What it does:
+
+- reads every `run-manifest.json` under `.singleton/runs/`
+- aggregates cost and run count per provider, per time bucket
+- prints aligned columns with per-provider totals and bucket totals
+
+Notes:
+
+- `codex` runs report a cost of `0` because Codex usage is not surfaced in its manifest. The aggregator still counts the runs, but the cost column will read `$0`.
+- An unknown bucket name prints an error listing the valid values.
+
 ## REPL commands
 
 ```txt
@@ -951,6 +978,7 @@ singleton
 /stop
 /commit-last
 /ls
+/usage [--today | --this-month | --last-month | --all-time]
 /help
 /quit
 ```
