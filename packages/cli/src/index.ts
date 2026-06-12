@@ -112,7 +112,8 @@ program
     .argument('[bucket]', 'Bucket to show (today | this-month | last-month | all-time)')
     .option('-r, --root <path>', 'Project root', process.cwd())
     .action(async (bucket,opts) => {
-        await usageCommand(opts, bucket);
+        const output = await usageCommand(opts, bucket);
+        console.log(output);
     });
 
 program.parseAsync(process.argv);

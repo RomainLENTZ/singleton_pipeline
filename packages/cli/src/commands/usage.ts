@@ -1,16 +1,15 @@
 import path from 'node:path';
-import { style } from '../theme.js';
 import { scanRuns } from '../usage/reader.js';
 import { aggregate } from '../usage/aggregator.js';
 import {ProviderId} from "../types.js";
-import {Argument} from "commander";
 import {BucketWithProviders, BucketTotalOnly, BucketKey} from "../usage/types.js";
+import {S} from "../shell.js";
 
 type UsageOptions = {
     root: string;
 };
 
-export async function usageCommand(opts: UsageOptions, bucket : string): Promise<void> {
+export async function usageCommand(opts: UsageOptions, bucket : string): Promise<string> {
     const root = path.resolve(opts.root);
 
     const runs = await scanRuns(root);
@@ -23,29 +22,38 @@ export async function usageCommand(opts: UsageOptions, bucket : string): Promise
         "all-time" : () => renderBucketWithProvider("All time", result.allTime),
     }
 
-    if(!bucket){
-        console.log("All costs summary :");
-        Object.values(buckets).forEach(render => render())
-    } else if(isBucketKey(bucket)){
-        buckets[bucket]();
-    } else {
-        console.log(bucket + "Is not a valid vallid bucket name. Please provide a valid bucket name(today, this-month, last-month, all-time");
+    if(isBucketKey(bucket)){
+        return buckets[bucket]();
+    }else if(!bucket){
+        return "All costs summary:" + Object.values(buckets).map(r => r()).join('\n')
     }
+
+    return `"${bucket}" is not a valid bucket name. Use one of: today, this-month, last-month, all-time.`;
+
 }
 
-function renderBucketWithProvider (label : string, bucket : BucketWithProviders) : void {
-    console.log("\n" + label + " : \n");
+const LABEL_COL = 22;
+
+function renderBucketWithProvider (label : string, bucket : BucketWithProviders) : string {
+    let msg = `\n{${S.muted}-fg}════════════════════════════════════════{/}\n{${S.keyword}-fg}{bold}${label}{/}\n`
 
     for (const provider of Object.keys(bucket.byProvider) as ProviderId[]) {
-        console.log(`${provider.padEnd(10)} ${"$".padStart(8) + bucket.byProvider[provider].totalCost}`);
+        const prefix = `   ${provider}`;
+        const cost = `$${bucket.byProvider[provider].totalCost}`;
+        msg += `{${S.text}-fg}{bold}${prefix.padEnd(LABEL_COL)}{/}${cost}\n`;
     }
-    console.log(`${label + " total : ".padEnd(10)} ${"$".padStart(8) + bucket.total}`);
 
+    const totalPrefix = `${label} total:`;
+    const totalCost = `$${bucket.total}`;
+    msg += `{${S.accent}-fg}{bold}${totalPrefix.padEnd(LABEL_COL)}${totalCost}{/}`;
+
+    return msg;
 }
 
-function renderBucketTotalOnly (label : string, bucket : BucketTotalOnly) : void {
-    console.log("\n" + label + "\n");
-    console.log(`${"total".padEnd(10)} ${"$".padStart(8) + bucket.total}`);
+function renderBucketTotalOnly (label : string, bucket : BucketTotalOnly) : string {
+    const totalPrefix = `${label} total:`;
+    const totalCost = `$${bucket.total}`;
+    return `\n{${S.muted}-fg}════════════════════════════════════════{/}\n{${S.keyword}-fg}{bold}${label}{/}\n{${S.accent}-fg}{bold}${totalPrefix.padEnd(LABEL_COL)}${totalCost}{/}`;
 }
 
 function isBucketKey (value : string) : value is BucketKey {
